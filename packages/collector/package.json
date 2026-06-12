@@ -1,0 +1,23 @@
+{
+  "name": "@table/collector",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "cli": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@table/shared": "*",
+    "better-sqlite3": "^11",
+    "p-queue": "^8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7",
+    "typescript": "^5.6",
+    "tsx": "^4"
+  }
+}

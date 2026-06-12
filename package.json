@@ -1,0 +1,14 @@
+{
+  "name": "table",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build -w @table/shared && npm run build -w @table/collector",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}
