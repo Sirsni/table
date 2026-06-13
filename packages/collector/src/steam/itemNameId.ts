@@ -1,11 +1,16 @@
 import type { SteamHttp } from "./http.js";
+import { writeFileSync, mkdirSync } from "node:fs";
 
-// Market_LoadOrderSpread( 123456 ) — пробелы вокруг числа вариативны.
-const NAMEID_RE = /Market_LoadOrderSpread\s*\(\s*(\d+)\s*\)/;
+// item_nameid встречается в нескольких местах страницы листинга.
+const NAMEID_PATTERNS: RegExp[] = [
+  /Market_LoadOrderSpread\s*\(\s*(\d+)\s*\)/,
+  /ItemActivityTicker\.Start\s*\(\s*(\d+)\s*\)/,
+  /item_nameid["'\s:=]+(\d+)/,
+];
 
 /**
- * Грузит страницу листинга предмета и извлекает item_nameid из вызова
- * Market_LoadOrderSpread(<digits>). item_nameid не меняется — кешируется навсегда.
+ * Грузит страницу листинга предмета и извлекает item_nameid.
+ * item_nameid не меняется — кешируется навсегда.
  */
 export async function resolveItemNameId(
   http: SteamHttp,
@@ -16,12 +21,20 @@ export async function resolveItemNameId(
     marketHashName,
   )}`;
   const html = await http.getText(url);
-  const m = NAMEID_RE.exec(html);
-  if (!m) {
-    throw new Error(
-      `Не найден item_nameid (Market_LoadOrderSpread) на странице "${marketHashName}" (app ${appId}). ` +
-        "Возможно, предмет снят с продажи или страница вернула капчу/редирект.",
-    );
+  for (const re of NAMEID_PATTERNS) {
+    const m = re.exec(html);
+    if (m) return Number(m[1]);
   }
-  return Number(m[1]);
+  // Не нашли — сохраняем страницу для диагностики.
+  try {
+    mkdirSync("data", { recursive: true });
+    writeFileSync("data/last-listing.html", html);
+  } catch {
+    /* игнор */
+  }
+  throw new Error(
+    `Не найден item_nameid на странице "${marketHashName}" (app ${appId}). ` +
+      `HTML сохранён в data/last-listing.html (длина ${html.length}). ` +
+      "Возможно, страница вернула капчу/логин-стену/редирект.",
+  );
 }
