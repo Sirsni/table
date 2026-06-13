@@ -131,7 +131,8 @@ export class SteamHttp {
         if (res.status === 429 || res.status >= 500) {
           const retriable = attempt < this.maxRetries;
           let pause = backoffMs(attempt);
-          if (res.status === 429) pause = Math.max(pause, 10000);
+          // Бан по 429 у Steam держится минуты — ждём 30s, 60s, 120s, 240s.
+          if (res.status === 429) pause = 30000 * 2 ** attempt;
           console.warn(
             `[steam] GET ${shortenUrl(url)} -> ${res.status} ` +
               `(попытка ${attempt + 1}${retriable ? `, пауза ${pause}ms` : ", ретраи исчерпаны"})`,
