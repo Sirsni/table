@@ -13,11 +13,12 @@
   "dependencies": {
     "@table/shared": "*",
     "better-sqlite3": "^11",
-    "p-queue": "^8"
+    "p-queue": "^8",
+    "undici": "^6.26.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7",
-    "typescript": "^5.6",
-    "tsx": "^4"
+    "tsx": "^4",
+    "typescript": "^5.6"
   }
 }

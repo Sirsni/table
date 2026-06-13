@@ -1,4 +1,5 @@
 import PQueue from "p-queue";
+import { ProxyAgent } from "undici";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -68,6 +69,7 @@ export interface SteamHttpOptions {
 export class SteamHttp {
   private readonly queue: PQueue;
   private readonly maxRetries: number;
+  private readonly dispatcher: ProxyAgent | undefined;
 
   constructor(opts: SteamHttpOptions = {}) {
     const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
@@ -77,6 +79,13 @@ export class SteamHttp {
       interval: intervalMs,
       intervalCap: 1,
     });
+    // STEAM_PROXY=http://user:pass@host:port — пускаем запросы через прокси,
+    // если прямой IP забанен/задушен Steam (CGNAT, датацентр и т.п.).
+    const proxyUrl = process.env.STEAM_PROXY;
+    if (proxyUrl) {
+      this.dispatcher = new ProxyAgent(proxyUrl);
+      console.log(`[steam] использую прокси из STEAM_PROXY`);
+    }
   }
 
   async getJson<T>(url: string): Promise<T> {
@@ -107,7 +116,9 @@ export class SteamHttp {
             "Accept-Language": "ru-RU,ru;q=0.9",
             Accept: "application/json, text/javascript, text/html, */*; q=0.01",
           },
-        });
+          // undici-специфичное поле, в типах RequestInit его нет
+          ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
+        } as RequestInit);
 
         if (res.ok) {
           console.log(`[steam] GET ${shortenUrl(url)} -> ${res.status}`);
