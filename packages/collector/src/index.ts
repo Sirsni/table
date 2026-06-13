@@ -2,13 +2,10 @@ import type Database from "better-sqlite3";
 import { openDb } from "./db.js";
 import { SteamHttp } from "./steam/http.js";
 import { iterateMarketItems } from "./steam/searchRender.js";
-import { resolveItemNameId } from "./steam/itemNameId.js";
-import { fetchOrderHistogram } from "./steam/histogram.js";
+import { fetchOrderBook } from "./steam/orderbook.js";
 import {
   upsertItem,
-  setItemNameId,
   insertSnapshot,
-  listItemsNeedingNameId,
   listItemsForPriceUpdate,
   topByMargin,
 } from "./repo.js";
@@ -21,9 +18,10 @@ interface Args {
   app: number;
   pages?: number;
   limit?: number;
+  currency?: number;
 }
 
-/** Простой парсер process.argv: --app 730 --pages 5 --limit 50. */
+/** Простой парсер process.argv: --app 730 --pages 5 --limit 50 --currency 5. */
 function parseArgs(argv: string[]): Args {
   const out: Args = { app: 730 };
   for (let i = 0; i < argv.length; i++) {
@@ -42,6 +40,10 @@ function parseArgs(argv: string[]): Args {
         out.limit = Number(next);
         i++;
         break;
+      case "--currency":
+        out.currency = Number(next);
+        i++;
+        break;
       default:
         // незнакомые токены игнорируем
         break;
@@ -58,10 +60,10 @@ function validateApp(app: number): void {
   }
 }
 
-/** копейки -> рубли с 2 знаками. */
-function rub(kopecks: number | null): string {
-  if (kopecks === null) return "—";
-  return (kopecks / 100).toFixed(2);
+/** Минимальные единицы валюты (центы/копейки) -> 2 знака после запятой. */
+function money(units: number | null): string {
+  if (units === null) return "—";
+  return (units / 100).toFixed(2);
 }
 
 function pad(s: string, w: number): string {
@@ -86,29 +88,11 @@ async function cmdSyncItems(db: Database.Database, http: SteamHttp, args: Args) 
   console.log(`sync-items: готово, upsert ${count} предметов (app ${args.app}).`);
 }
 
-async function cmdResolveIds(
-  db: Database.Database,
-  http: SteamHttp,
-  args: Args,
-) {
-  const limit = args.limit ?? 50;
-  const items = listItemsNeedingNameId(db, args.app, limit);
-  console.log(`resolve-ids: app=${args.app}, к резолву ${items.length} предметов.`);
-  let ok = 0;
-  let fail = 0;
-  for (const it of items) {
-    try {
-      const nameId = await resolveItemNameId(http, args.app, it.market_hash_name);
-      setItemNameId(db, it.id, nameId);
-      ok++;
-      console.log(`  [ok] ${it.market_hash_name} -> ${nameId}`);
-    } catch (err) {
-      fail++;
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`  [fail] ${it.market_hash_name}: ${msg}`);
-    }
-  }
-  console.log(`resolve-ids: готово, успешно ${ok}, ошибок ${fail}.`);
+function cmdResolveIds() {
+  console.log(
+    "resolve-ids: больше не требуется. Новый рынок Steam отдаёт стакан по имени " +
+      "предмета (orderbook), item_nameid не нужен. Сразу запускай update-prices.",
+  );
 }
 
 async function cmdUpdatePrices(
@@ -117,26 +101,29 @@ async function cmdUpdatePrices(
   args: Args,
 ) {
   const limit = args.limit ?? 100;
+  const currency = args.currency; // если не задан — Steam выберет по гео-IP
   const items = listItemsForPriceUpdate(db, args.app, limit);
-  console.log(`update-prices: app=${args.app}, к обновлению ${items.length} предметов.`);
+  console.log(
+    `update-prices: app=${args.app}, к обновлению ${items.length} предметов.`,
+  );
   let ok = 0;
   let fail = 0;
+  const seenCurrencies = new Set<number>();
   for (const it of items) {
-    if (it.item_nameid === null) continue; // на всякий случай
     try {
-      const h = await fetchOrderHistogram(http, it.item_nameid);
+      const ob = await fetchOrderBook(http, args.app, it.market_hash_name, currency);
+      if (ob.currency !== null) seenCurrencies.add(ob.currency);
       insertSnapshot(db, {
         itemId: it.id,
         provider: PROVIDER,
-        buyOrder: h.highestBuyOrder,
-        sellPrice: h.lowestSellOrder,
-        volume: null, // объём возьмём из priceoverview позже
+        buyOrder: ob.highestBuyOrder,
+        sellPrice: ob.lowestSellOrder,
+        volume: ob.sellOrderCount, // кол-во лотов на продажу — прокси ликвидности
       });
       ok++;
       console.log(
-        `  [ok] ${it.market_hash_name}: buy=${rub(h.highestBuyOrder)} sell=${rub(
-          h.lowestSellOrder,
-        )}`,
+        `  [ok] ${it.market_hash_name}: buy=${money(ob.highestBuyOrder)} ` +
+          `sell=${money(ob.lowestSellOrder)}`,
       );
     } catch (err) {
       fail++;
@@ -145,6 +132,14 @@ async function cmdUpdatePrices(
     }
   }
   console.log(`update-prices: готово, успешно ${ok}, ошибок ${fail}.`);
+  if (seenCurrencies.size > 1) {
+    console.warn(
+      `  ⚠ разные валюты в ответах: ${[...seenCurrencies].join(", ")} — ` +
+        "цены несравнимы. Зафиксируй валюту флагом --currency (5=RUB, 1=USD).",
+    );
+  } else if (seenCurrencies.size === 1) {
+    console.log(`  валюта ответа Steam (eCurrency): ${[...seenCurrencies][0]}`);
+  }
 }
 
 function cmdTop(db: Database.Database, args: Args) {
@@ -181,20 +176,21 @@ function cmdTop(db: Database.Database, args: Args) {
   const NUM_W = 12;
   console.log(
     pad("Предмет", NAME_W) +
-      padLeft("Автозапрос ₽", NUM_W) +
-      padLeft("Продажа ₽", NUM_W) +
-      padLeft("Выручка ₽", NUM_W) +
-      padLeft("Прибыль ₽", NUM_W) +
+      padLeft("Автозапрос", NUM_W) +
+      padLeft("Продажа", NUM_W) +
+      padLeft("Выручка", NUM_W) +
+      padLeft("Прибыль", NUM_W) +
       padLeft("Маржа %", NUM_W),
   );
   for (const r of ranked) {
-    const name = r.name.length > NAME_W - 1 ? r.name.slice(0, NAME_W - 2) + "…" : r.name;
+    const name =
+      r.name.length > NAME_W - 1 ? r.name.slice(0, NAME_W - 2) + "…" : r.name;
     console.log(
       pad(name, NAME_W) +
-        padLeft(rub(r.buy), NUM_W) +
-        padLeft(rub(r.sell), NUM_W) +
-        padLeft(rub(r.receive), NUM_W) +
-        padLeft(rub(r.prof), NUM_W) +
+        padLeft(money(r.buy), NUM_W) +
+        padLeft(money(r.sell), NUM_W) +
+        padLeft(money(r.receive), NUM_W) +
+        padLeft(money(r.prof), NUM_W) +
         padLeft(r.margin.toFixed(2), NUM_W),
     );
   }
@@ -207,12 +203,12 @@ function usage(): void {
       "collector — сборщик цен Steam Market",
       "",
       "Команды:",
-      "  sync-items    --app 730 [--pages 5]    список предметов -> БД",
-      "  resolve-ids   --app 730 [--limit 50]   резолв item_nameid",
-      "  update-prices --app 730 [--limit 100]  стакан -> snapshot",
-      "  top           --app 730 [--limit 20]   топ по марже в консоль",
+      "  sync-items    --app 730 [--pages 5]                список предметов -> БД",
+      "  update-prices --app 730 [--limit 100] [--currency 5]  стакан -> snapshot",
+      "  top           --app 730 [--limit 20]               топ по марже в консоль",
       "",
       "app: 730 (CS2, по умолч.), 570 (Dota2), 252490 (Rust).",
+      "currency: 5=RUB, 1=USD (по умолч. Steam выбирает по гео-IP).",
     ].join("\n"),
   );
 }
@@ -253,14 +249,15 @@ async function main(): Promise<void> {
       cmdTop(db, args);
       return;
     }
+    if (cmd === "resolve-ids") {
+      cmdResolveIds();
+      return;
+    }
 
     const http = new SteamHttp();
     switch (cmd) {
       case "sync-items":
         await cmdSyncItems(db, http, args);
-        break;
-      case "resolve-ids":
-        await cmdResolveIds(db, http, args);
         break;
       case "update-prices":
         await cmdUpdatePrices(db, http, args);

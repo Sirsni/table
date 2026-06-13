@@ -106,8 +106,9 @@ export function listItemsNeedingNameId(
 }
 
 /**
- * Предметы с item_nameid для обновления цен: те, у кого нет ни одного
- * snapshot — первыми, затем по давности последнего snapshot (старые сначала).
+ * Предметы для обновления цен: те, у кого нет ни одного snapshot — первыми,
+ * затем по давности последнего snapshot (старые сначала). Новый рынок Steam
+ * работает по имени, поэтому item_nameid не требуется.
  */
 export function listItemsForPriceUpdate(
   db: Database.Database,
@@ -123,7 +124,7 @@ export function listItemsForPriceUpdate(
          FROM price_snapshots
          GROUP BY item_id
        ) s ON s.item_id = i.id
-       WHERE i.app_id = ? AND i.item_nameid IS NOT NULL
+       WHERE i.app_id = ?
        ORDER BY (s.last_fetched IS NULL) DESC, s.last_fetched ASC, i.id ASC
        LIMIT ?`,
     )
