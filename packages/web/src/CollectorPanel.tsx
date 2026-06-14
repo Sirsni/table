@@ -34,8 +34,8 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
   const [pages, setPages] = useState("5");
   const [limit, setLimit] = useState("100");
   const [currency, setCurrency] = useState("1");
-  const [concurrency, setConcurrency] = useState("1");
-  const [intervalMs, setIntervalMs] = useState("1000");
+  const [concurrency, setConcurrency] = useState("5");
+  const [intervalMs, setIntervalMs] = useState("200");
 
   const [status, setStatus] = useState<CollectorStatus | null>(null);
   const [error, setError] = useState<string | null>(null);

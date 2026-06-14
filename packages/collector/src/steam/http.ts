@@ -71,6 +71,12 @@ export class SteamHttp {
   private readonly queue: PQueue;
   private readonly maxRetries: number;
   private readonly dispatcher: ProxyAgent | undefined;
+  private readonly concurrencyValue: number;
+
+  /** Сконфигурированная параллельность — размер пула для вызывающего (runner). */
+  get concurrency(): number {
+    return this.concurrencyValue;
+  }
 
   constructor(opts: SteamHttpOptions = {}) {
     // Интервал между запросами: опция -> env STEAM_INTERVAL_MS -> дефолт 3000.
@@ -95,6 +101,7 @@ export class SteamHttp {
     if (concurrency > 1) {
       console.log(`[steam] параллельных запросов: ${concurrency}`);
     }
+    this.concurrencyValue = concurrency;
     this.queue = new PQueue({
       concurrency,
       interval: intervalMs,

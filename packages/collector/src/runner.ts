@@ -81,8 +81,11 @@ export async function syncItems(
 
 /**
  * Обновляет цены: берёт предметы из listItemsForPriceUpdate и тянет стакан
- * для каждого. Ошибку по предмету ловим (fail++), не прерывая проход.
- * При signal.aborted прекращаем между предметами.
+ * для каждого. Запросы идут пулом воркеров (размер = http.concurrency), чтобы
+ * параллельность реально использовалась — иначе последовательный await сводил
+ * бы очередь к одному запросу за раз. Темп между запросами задаёт интервал-
+ * троттл внутри SteamHttp. Ошибку по предмету ловим (fail++). При signal.aborted
+ * воркеры перестают забирать новые предметы (запросы «в полёте» дорабатывают).
  */
 export async function updatePrices(
   db: Database.Database,
@@ -103,26 +106,41 @@ export async function updatePrices(
     onProgress?.({ processed, total, ok, fail, lastName });
   };
 
-  for (const it of items) {
-    if (signal?.aborted) break;
-    lastName = it.market_hash_name;
-    try {
-      const ob = await fetchOrderBook(http, app, it.market_hash_name, currency);
-      insertSnapshot(db, {
-        itemId: it.id,
-        provider: PROVIDER,
-        buyOrder: ob.highestBuyOrder,
-        sellPrice: ob.lowestSellOrder,
-        volume: ob.sellOrderCount, // кол-во лотов на продажу — прокси ликвидности
-        currency: ob.currency,
-      });
-      ok++;
-    } catch {
-      fail++;
+  // Общий курсор: каждый воркер берёт следующий предмет.
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      if (signal?.aborted) return;
+      const i = next++;
+      if (i >= items.length) return;
+      const it = items[i];
+      lastName = it.market_hash_name;
+      try {
+        const ob = await fetchOrderBook(
+          http,
+          app,
+          it.market_hash_name,
+          currency,
+        );
+        insertSnapshot(db, {
+          itemId: it.id,
+          provider: PROVIDER,
+          buyOrder: ob.highestBuyOrder,
+          sellPrice: ob.lowestSellOrder,
+          volume: ob.sellOrderCount, // кол-во лотов на продажу — прокси ликвидности
+          currency: ob.currency,
+        });
+        ok++;
+      } catch {
+        fail++;
+      }
+      processed++;
+      emit();
     }
-    processed++;
-    emit();
-  }
+  };
+
+  const poolSize = Math.max(1, Math.min(http.concurrency, total || 1));
+  await Promise.all(Array.from({ length: poolSize }, () => worker()));
 
   return { ok, fail, processed };
 }
