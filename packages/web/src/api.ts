@@ -70,6 +70,8 @@ export interface FetchItemsParams {
 export interface StartSyncBody {
   app: number;
   pages: number;
+  concurrency?: number;
+  intervalMs?: number;
 }
 
 export interface StartUpdateBody {

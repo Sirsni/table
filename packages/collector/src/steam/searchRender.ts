@@ -55,8 +55,56 @@ function mapResult(r: RenderResultRaw): MarketSearchItem | null {
   };
 }
 
+export interface MarketPage {
+  items: MarketSearchItem[];
+  /** Всего предметов в выдаче (для расчёта числа страниц), либо null. */
+  totalCount: number | null;
+}
+
+export const MARKET_PAGE_SIZE = PAGE_SIZE;
+
 /**
- * Постранично перебирает предметы рынка для appId.
+ * Загружает одну страницу выдачи рынка (start..start+100). Один повтор при
+ * success:false / null results, затем ошибка.
+ */
+export async function fetchMarketPage(
+  http: SteamHttp,
+  appId: number,
+  start: number,
+): Promise<MarketPage> {
+  const url = buildUrl(appId, start);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const resp = await http.getJson<RenderResponseRaw>(url);
+    if (resp && resp.success !== false && Array.isArray(resp.results)) {
+      const items: MarketSearchItem[] = [];
+      for (const r of resp.results) {
+        const it = mapResult(r);
+        if (it) items.push(it);
+      }
+      return {
+        items,
+        totalCount:
+          typeof resp.total_count === "number" ? resp.total_count : null,
+      };
+    }
+    if (attempt === 0) {
+      console.warn(
+        `[search] страница start=${start} вернула success=${resp?.success} / results=${
+          Array.isArray(resp?.results) ? "ok" : "null"
+        }, повтор`,
+      );
+      continue;
+    }
+    throw new Error(
+      `search/render отдал некорректный ответ для start=${start} (success=${resp?.success})`,
+    );
+  }
+  // недостижимо: цикл либо вернул страницу, либо бросил
+  throw new Error(`search/render: не удалось загрузить start=${start}`);
+}
+
+/**
+ * Постранично перебирает предметы рынка для appId (последовательно).
  * Останавливается, когда start >= total_count или пришёл пустой results.
  */
 export async function* iterateMarketItems(
@@ -69,46 +117,11 @@ export async function* iterateMarketItems(
   let page = 0;
 
   while (page < maxPages) {
-    const url = buildUrl(appId, start);
-
-    // Один повтор страницы при success:false / null results.
-    let data: RenderResponseRaw | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const resp = await http.getJson<RenderResponseRaw>(url);
-      if (resp && resp.success !== false && Array.isArray(resp.results)) {
-        data = resp;
-        break;
-      }
-      if (attempt === 0) {
-        console.warn(
-          `[search] страница start=${start} вернула success=${resp?.success} / results=${
-            Array.isArray(resp?.results) ? "ok" : "null"
-          }, повтор`,
-        );
-        continue;
-      }
-      throw new Error(
-        `search/render отдал некорректный ответ для start=${start} (success=${resp?.success})`,
-      );
-    }
-
-    // data гарантированно не null после цикла (иначе брошена ошибка).
-    const results = data!.results ?? [];
-    if (results.length === 0) {
-      return; // пустая страница — конец
-    }
-
-    for (const r of results) {
-      const item = mapResult(r);
-      if (item) yield item;
-    }
-
-    start += results.length;
+    const { items, totalCount } = await fetchMarketPage(http, appId, start);
+    if (items.length === 0) return;
+    for (const item of items) yield item;
+    start += items.length;
     page += 1;
-
-    const total = data!.total_count;
-    if (typeof total === "number" && start >= total) {
-      return;
-    }
+    if (totalCount !== null && start >= totalCount) return;
   }
 }

@@ -79,7 +79,12 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
 
   async function handleSync(): Promise<void> {
     setError(null);
-    const result = await startSync({ app, pages: num(pages, 5) });
+    const result = await startSync({
+      app,
+      pages: num(pages, 5),
+      concurrency: num(concurrency, 5),
+      intervalMs: num(intervalMs, 200),
+    });
     if ("error" in result) {
       setError(result.error);
       return;

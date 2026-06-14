@@ -32,6 +32,8 @@ export interface CollectorStatus {
 export interface StartSyncParams {
   app: number;
   pages: number;
+  concurrency?: number;
+  intervalMs?: number;
 }
 
 export interface StartUpdateParams {
@@ -130,7 +132,10 @@ export class CollectorService {
 
   startSync(params: StartSyncParams): CollectorStatus {
     const controller = this.begin("sync");
-    const http = this.makeHttp({});
+    const http = this.makeHttp({
+      concurrency: params.concurrency,
+      intervalMs: params.intervalMs,
+    });
     // Запуск в фоне: НЕ ждём здесь, маршрут возвращает 202 сразу.
     void syncItems(this.db, http, {
       app: params.app,

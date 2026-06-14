@@ -1,6 +1,10 @@
 import type Database from "better-sqlite3";
 import type { SteamHttp } from "./steam/http.js";
-import { iterateMarketItems } from "./steam/searchRender.js";
+import {
+  fetchMarketPage,
+  MARKET_PAGE_SIZE,
+} from "./steam/searchRender.js";
+import type { MarketSearchItem } from "./steam/searchRender.js";
 import { fetchOrderBook } from "./steam/orderbook.js";
 import { upsertItem, insertSnapshot, listItemsForPriceUpdate } from "./repo.js";
 
@@ -44,8 +48,10 @@ export interface UpdatePricesOptions {
 
 /**
  * Загружает список предметов рынка (search/render) и upsert-ит их в БД.
- * total заранее неизвестен (пагинация) — отражаем его как processed.
- * При signal.aborted прекращаем перебор страниц на ближайшей итерации.
+ * Первая страница даёт total_count, остальные страницы тянутся пулом воркеров
+ * (размер = http.concurrency), чтобы синхронизация тоже использовала заданную
+ * скорость, а не шла строго по странице за раз. total известен (из total_count,
+ * ограничен pages*100). При signal.aborted воркеры перестают брать новые страницы.
  */
 export async function syncItems(
   db: Database.Database,
@@ -57,24 +63,67 @@ export async function syncItems(
   let ok = 0;
   let fail = 0;
   let lastName: string | null = null;
+  let total = 0;
 
   const emit = () => {
-    onProgress?.({ processed, total: processed, ok, fail, lastName });
+    onProgress?.({ processed, total, ok, fail, lastName });
   };
 
-  for await (const item of iterateMarketItems(http, app, { maxPages: pages })) {
-    if (signal?.aborted) break;
-    lastName = item.marketHashName;
-    try {
-      upsertItem(db, app, item.marketHashName, item.iconUrl);
-      ok++;
-    } catch {
-      // Сбой записи одного предмета не должен ронять весь проход.
-      fail++;
+  const upsertItems = (items: MarketSearchItem[]) => {
+    for (const item of items) {
+      lastName = item.marketHashName;
+      try {
+        upsertItem(db, app, item.marketHashName, item.iconUrl);
+        ok++;
+      } catch {
+        // Сбой записи одного предмета не должен ронять весь проход.
+        fail++;
+      }
+      processed++;
     }
-    processed++;
     emit();
+  };
+
+  // Первая страница: получаем total_count и первые предметы.
+  const first = await fetchMarketPage(http, app, 0);
+  const totalItems = Math.min(
+    first.totalCount ?? first.items.length,
+    pages * MARKET_PAGE_SIZE,
+  );
+  total = totalItems;
+  upsertItems(first.items);
+
+  if (signal?.aborted || first.items.length === 0) {
+    return { ok, fail, processed };
   }
+
+  // Оффсеты остальных страниц.
+  const offsets: number[] = [];
+  for (let s = MARKET_PAGE_SIZE; s < totalItems; s += MARKET_PAGE_SIZE) {
+    offsets.push(s);
+  }
+
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (true) {
+      if (signal?.aborted) return;
+      const i = next++;
+      if (i >= offsets.length) return;
+      try {
+        const page = await fetchMarketPage(http, app, offsets[i]);
+        upsertItems(page.items);
+      } catch {
+        fail++;
+        emit();
+      }
+    }
+  };
+
+  const poolSize = Math.max(
+    1,
+    Math.min(http.concurrency, offsets.length || 1),
+  );
+  await Promise.all(Array.from({ length: poolSize }, () => worker()));
 
   return { ok, fail, processed };
 }

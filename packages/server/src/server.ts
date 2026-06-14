@@ -144,13 +144,20 @@ app.get("/api/collector/status", async () => collector.getStatus());
 interface SyncBody {
   app?: number;
   pages?: number;
+  concurrency?: number;
+  intervalMs?: number;
 }
 app.post<{ Body: SyncBody }>("/api/collector/sync", async (req, reply) => {
   const body = req.body ?? {};
   const app = num(body.app) ?? 730;
   const pages = num(body.pages) ?? 5;
   try {
-    const status = collector.startSync({ app, pages });
+    const status = collector.startSync({
+      app,
+      pages,
+      concurrency: num(body.concurrency),
+      intervalMs: num(body.intervalMs),
+    });
     return reply.code(202).send(status);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
