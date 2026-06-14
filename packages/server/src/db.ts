@@ -7,10 +7,10 @@ import type Database from "better-sqlite3";
  * сбора. Схему/миграции/view создаёт openDb коллектора — переиспользуем его,
  * чтобы не дублировать DDL.
  *
- * Путь: аргумент -> env DB_PATH -> data/table.sqlite. DB_PATH нужен в т.ч. для
- * тестов на временной БД, не трогая реальные данные пользователя.
+ * Путь: аргумент -> env DB_PATH -> <корень репозитория>/data/table.sqlite
+ * (дефолт и обработку DB_PATH задаёт openDb коллектора — единый для CLI и сервера).
+ * DB_PATH нужен в т.ч. для тестов на временной БД, не трогая реальные данные.
  */
 export function openServerDb(path?: string): Database.Database {
-  const dbPath = path ?? process.env.DB_PATH ?? "data/table.sqlite";
-  return openDb(dbPath);
+  return openDb(path);
 }

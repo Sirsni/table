@@ -1,6 +1,15 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Путь к БД по умолчанию — относительно КОРНЯ репозитория, а не текущей рабочей
+// папки. Иначе `npm run -w <pkg>` (cwd = папка пакета) писал бы каждый пакет в
+// свой data/, и сервер не видел бы данные, собранные CLI коллектора.
+// db.ts лежит в packages/collector/{src,dist}/ — корень на 3 уровня выше.
+const DEFAULT_DB_PATH = fileURLToPath(
+  new URL("../../../data/table.sqlite", import.meta.url),
+);
 
 const MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS items (
@@ -50,10 +59,11 @@ function ensureCurrencyColumn(db: Database.Database): void {
   }
 }
 
-export function openDb(path = "data/table.sqlite"): Database.Database {
-  mkdirSync(dirname(path), { recursive: true });
+export function openDb(path?: string): Database.Database {
+  const dbPath = path ?? process.env.DB_PATH ?? DEFAULT_DB_PATH;
+  mkdirSync(dirname(dbPath), { recursive: true });
 
-  const db = new Database(path);
+  const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   db.exec(MIGRATION_SQL);
   // Миграция существующих БД: добавить currency до пересоздания view,

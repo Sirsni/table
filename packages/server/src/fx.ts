@@ -1,5 +1,12 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Кэш курсов — в <корень репозитория>/data/, не относительно cwd (см. db.ts).
+// fx.ts лежит в packages/server/{src,dist}/ — корень на 3 уровня выше.
+const DEFAULT_FX_CACHE_PATH = fileURLToPath(
+  new URL("../../../data/fx-cache.json", import.meta.url),
+);
 
 /**
  * Конвертация цен Steam в доллары США. ОБЯЗАН переживать отсутствие сети:
@@ -44,7 +51,7 @@ interface FxCache {
 }
 
 function cachePath(): string {
-  return process.env.FX_CACHE_PATH ?? "data/fx-cache.json";
+  return process.env.FX_CACHE_PATH ?? DEFAULT_FX_CACHE_PATH;
 }
 
 // Кэш в памяти на время жизни процесса.
