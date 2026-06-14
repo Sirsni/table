@@ -19,9 +19,10 @@ interface Args {
   pages?: number;
   limit?: number;
   currency?: number;
+  name?: string;
 }
 
-/** Простой парсер process.argv: --app 730 --pages 5 --limit 50 --currency 5. */
+/** Простой парсер process.argv: --app 730 --pages 5 --limit 50 --currency 5 --name "...". */
 function parseArgs(argv: string[]): Args {
   const out: Args = { app: 730 };
   for (let i = 0; i < argv.length; i++) {
@@ -42,6 +43,10 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--currency":
         out.currency = Number(next);
+        i++;
+        break;
+      case "--name":
+        out.name = next;
         i++;
         break;
       default:
@@ -86,6 +91,32 @@ async function cmdSyncItems(db: Database.Database, http: SteamHttp, args: Args) 
     }
   }
   console.log(`sync-items: готово, upsert ${count} предметов (app ${args.app}).`);
+}
+
+/** Точечная проверка одного предмета по имени (без БД). */
+async function cmdProbe(http: SteamHttp, args: Args) {
+  if (!args.name) {
+    throw new Error(
+      'probe требует --name "<полное имя предмета>". ' +
+        'Напр.: probe --name "AK-47 | Redline (Field-Tested)"',
+    );
+  }
+  console.log(`probe: app=${args.app}, "${args.name}"`);
+  const ob = await fetchOrderBook(http, args.app, args.name, args.currency);
+  const buy = ob.highestBuyOrder;
+  const sell = ob.lowestSellOrder;
+  console.log(`  валюта (eCurrency): ${ob.currency ?? "—"}`);
+  console.log(`  автозапрос (highest buy): ${money(buy)}`);
+  console.log(`  продажа (lowest sell):    ${money(sell)}`);
+  console.log(`  заявок на покупку: ${ob.buyOrderCount ?? "—"}`);
+  console.log(`  лотов на продажу:  ${ob.sellOrderCount ?? "—"}`);
+  if (buy !== null && sell !== null) {
+    console.log(`  выручка после комиссии: ${money(sellerReceives(sell))}`);
+    console.log(`  прибыль автозапрос->продажа: ${money(profit(buy, sell))}`);
+    console.log(`  маржа: ${marginPct(buy, sell).toFixed(2)}%`);
+  } else {
+    console.log("  одна из сторон стакана пуста — спред не посчитать.");
+  }
 }
 
 function cmdResolveIds() {
@@ -205,6 +236,7 @@ function usage(): void {
       "Команды:",
       "  sync-items    --app 730 [--pages 5]                список предметов -> БД",
       "  update-prices --app 730 [--limit 100] [--currency 5]  стакан -> snapshot",
+      "  probe         --app 730 --name \"<имя>\" [--currency 5]  проверка 1 предмета",
       "  top           --app 730 [--limit 20]               топ по марже в консоль",
       "",
       "app: 730 (CS2, по умолч.), 570 (Dota2), 252490 (Rust).",
@@ -261,6 +293,9 @@ async function main(): Promise<void> {
         break;
       case "update-prices":
         await cmdUpdatePrices(db, http, args);
+        break;
+      case "probe":
+        await cmdProbe(http, args);
         break;
       default:
         console.error(`Неизвестная команда: ${cmd}`);
