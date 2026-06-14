@@ -1,9 +1,7 @@
 import type Database from "better-sqlite3";
 import type { SteamHttp } from "./steam/http.js";
-import {
-  fetchMarketPage,
-  MARKET_PAGE_SIZE,
-} from "./steam/searchRender.js";
+import { SteamHttpError } from "./steam/http.js";
+import { fetchMarketPage, MARKET_PAGE_SIZE } from "./steam/searchRender.js";
 import type { MarketSearchItem } from "./steam/searchRender.js";
 import { fetchOrderBook } from "./steam/orderbook.js";
 import { upsertItem, insertSnapshot, listItemsForPriceUpdate } from "./repo.js";
@@ -16,7 +14,14 @@ import { upsertItem, insertSnapshot, listItemsForPriceUpdate } from "./repo.js";
 
 const PROVIDER = "steam";
 
-/** Прогресс сбора. total для sync неизвестен заранее (пагинация) — равен processed. */
+// Предохранитель: после стольких 429 подряд проход останавливается сам —
+// при бане Steam продолжать бессмысленно и вредно (углубляет бан).
+const RATE_LIMIT_TRIP = 8;
+const RATE_LIMIT_MESSAGE =
+  "Steam вернул 429 (лимит запросов) — похоже, IP временно забанен. Сбор " +
+  "остановлен автоматически. Подожди несколько минут и снизь параллельность " +
+  "или увеличь интервал.";
+
 export interface CollectProgress {
   processed: number;
   total: number;
@@ -29,6 +34,8 @@ export interface CollectSummary {
   ok: number;
   fail: number;
   processed: number;
+  /** Заполняется, если проход остановлен предохранителем (например, 429). */
+  stoppedReason?: string;
 }
 
 export interface SyncItemsOptions {
@@ -47,23 +54,44 @@ export interface UpdatePricesOptions {
 }
 
 /**
+ * Внутренний контроллер отмены, связанный с внешним signal: срабатывает и при
+ * нажатии «Стоп» (внешний), и при срабатывании предохранителя (внутренний
+ * abort). Его signal прокидывается в HTTP-слой, чтобы прерывать запросы и паузы.
+ */
+function linkedController(external?: AbortSignal): AbortController {
+  const ctrl = new AbortController();
+  if (external) {
+    if (external.aborted) ctrl.abort();
+    else external.addEventListener("abort", () => ctrl.abort(), { once: true });
+  }
+  return ctrl;
+}
+
+function isRateLimit(err: unknown): boolean {
+  return err instanceof SteamHttpError && err.status === 429;
+}
+
+/**
  * Загружает список предметов рынка (search/render) и upsert-ит их в БД.
  * Первая страница даёт total_count, остальные страницы тянутся пулом воркеров
- * (размер = http.concurrency), чтобы синхронизация тоже использовала заданную
- * скорость, а не шла строго по странице за раз. total известен (из total_count,
- * ограничен pages*100). При signal.aborted воркеры перестают брать новые страницы.
+ * (размер = http.concurrency). Отмена (signal/«Стоп») и предохранитель 429
+ * мгновенно прерывают запросы и паузы.
  */
 export async function syncItems(
   db: Database.Database,
   http: SteamHttp,
   opts: SyncItemsOptions,
 ): Promise<CollectSummary> {
-  const { app, pages, onProgress, signal } = opts;
+  const { app, pages, onProgress } = opts;
+  const ctrl = linkedController(opts.signal);
+
   let processed = 0;
   let ok = 0;
   let fail = 0;
   let lastName: string | null = null;
   let total = 0;
+  let rateLimited = 0;
+  let stoppedReason: string | undefined;
 
   const emit = () => {
     onProgress?.({ processed, total, ok, fail, lastName });
@@ -76,7 +104,6 @@ export async function syncItems(
         upsertItem(db, app, item.marketHashName, item.iconUrl);
         ok++;
       } catch {
-        // Сбой записи одного предмета не должен ронять весь проход.
         fail++;
       }
       processed++;
@@ -84,65 +111,73 @@ export async function syncItems(
     emit();
   };
 
-  // Первая страница: получаем total_count и первые предметы.
-  const first = await fetchMarketPage(http, app, 0);
-  const totalItems = Math.min(
-    first.totalCount ?? first.items.length,
-    pages * MARKET_PAGE_SIZE,
-  );
-  total = totalItems;
-  upsertItems(first.items);
-
-  if (signal?.aborted || first.items.length === 0) {
-    return { ok, fail, processed };
-  }
-
-  // Оффсеты остальных страниц.
-  const offsets: number[] = [];
-  for (let s = MARKET_PAGE_SIZE; s < totalItems; s += MARKET_PAGE_SIZE) {
-    offsets.push(s);
-  }
-
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (true) {
-      if (signal?.aborted) return;
-      const i = next++;
-      if (i >= offsets.length) return;
-      try {
-        const page = await fetchMarketPage(http, app, offsets[i]);
-        upsertItems(page.items);
-      } catch {
-        fail++;
-        emit();
+  const noteError = (err: unknown) => {
+    if (ctrl.signal.aborted) return; // отмена — не считаем ошибкой
+    fail++;
+    if (isRateLimit(err)) {
+      rateLimited++;
+      if (rateLimited >= RATE_LIMIT_TRIP) {
+        stoppedReason = RATE_LIMIT_MESSAGE;
+        ctrl.abort();
       }
     }
+    emit();
   };
 
-  const poolSize = Math.max(
-    1,
-    Math.min(http.concurrency, offsets.length || 1),
-  );
-  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  // Первая страница: получаем total_count и первые предметы.
+  try {
+    const first = await fetchMarketPage(http, app, 0, ctrl.signal);
+    total = Math.min(
+      first.totalCount ?? first.items.length,
+      pages * MARKET_PAGE_SIZE,
+    );
+    upsertItems(first.items);
+    if (ctrl.signal.aborted || first.items.length === 0) {
+      return { ok, fail, processed, stoppedReason };
+    }
 
-  return { ok, fail, processed };
+    const offsets: number[] = [];
+    for (let s = MARKET_PAGE_SIZE; s < total; s += MARKET_PAGE_SIZE) {
+      offsets.push(s);
+    }
+
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (!ctrl.signal.aborted) {
+        const i = next++;
+        if (i >= offsets.length) return;
+        try {
+          const page = await fetchMarketPage(http, app, offsets[i], ctrl.signal);
+          upsertItems(page.items);
+          rateLimited = 0; // успех сбрасывает счётчик 429
+        } catch (err) {
+          noteError(err);
+        }
+      }
+    };
+
+    const poolSize = Math.max(1, Math.min(http.concurrency, offsets.length || 1));
+    await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  } catch (err) {
+    noteError(err);
+  }
+
+  return { ok, fail, processed, stoppedReason };
 }
 
 /**
  * Обновляет цены: берёт предметы из listItemsForPriceUpdate и тянет стакан
- * для каждого. Запросы идут пулом воркеров (размер = http.concurrency), чтобы
- * параллельность реально использовалась — иначе последовательный await сводил
- * бы очередь к одному запросу за раз. Темп между запросами задаёт интервал-
- * троттл внутри SteamHttp. Ошибку по предмету ловим (fail++). При signal.aborted
- * воркеры перестают забирать новые предметы (запросы «в полёте» дорабатывают).
+ * для каждого пулом воркеров (размер = http.concurrency). Отмена (signal/«Стоп»)
+ * и предохранитель 429 мгновенно прерывают запросы и паузы.
  */
 export async function updatePrices(
   db: Database.Database,
   http: SteamHttp,
   opts: UpdatePricesOptions,
 ): Promise<CollectSummary> {
-  const { app, limit, onProgress, signal } = opts;
+  const { app, limit, onProgress } = opts;
   const currency = opts.currency ?? 1; // по умолчанию USD — не зависит от гео-IP
+  const ctrl = linkedController(opts.signal);
 
   const items = listItemsForPriceUpdate(db, app, limit);
   const total = items.length;
@@ -150,16 +185,16 @@ export async function updatePrices(
   let ok = 0;
   let fail = 0;
   let lastName: string | null = null;
+  let rateLimited = 0;
+  let stoppedReason: string | undefined;
 
   const emit = () => {
     onProgress?.({ processed, total, ok, fail, lastName });
   };
 
-  // Общий курсор: каждый воркер берёт следующий предмет.
   let next = 0;
   const worker = async (): Promise<void> => {
-    while (true) {
-      if (signal?.aborted) return;
+    while (!ctrl.signal.aborted) {
       const i = next++;
       if (i >= items.length) return;
       const it = items[i];
@@ -170,6 +205,7 @@ export async function updatePrices(
           app,
           it.market_hash_name,
           currency,
+          ctrl.signal,
         );
         insertSnapshot(db, {
           itemId: it.id,
@@ -180,8 +216,17 @@ export async function updatePrices(
           currency: ob.currency,
         });
         ok++;
-      } catch {
+        rateLimited = 0; // успех сбрасывает счётчик 429
+      } catch (err) {
+        if (ctrl.signal.aborted) return; // отмена — не считаем
         fail++;
+        if (isRateLimit(err)) {
+          rateLimited++;
+          if (rateLimited >= RATE_LIMIT_TRIP) {
+            stoppedReason = RATE_LIMIT_MESSAGE;
+            ctrl.abort();
+          }
+        }
       }
       processed++;
       emit();
@@ -191,5 +236,5 @@ export async function updatePrices(
   const poolSize = Math.max(1, Math.min(http.concurrency, total || 1));
   await Promise.all(Array.from({ length: poolSize }, () => worker()));
 
-  return { ok, fail, processed };
+  return { ok, fail, processed, stoppedReason };
 }

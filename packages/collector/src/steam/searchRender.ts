@@ -71,10 +71,11 @@ export async function fetchMarketPage(
   http: SteamHttp,
   appId: number,
   start: number,
+  signal?: AbortSignal,
 ): Promise<MarketPage> {
   const url = buildUrl(appId, start);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const resp = await http.getJson<RenderResponseRaw>(url);
+    const resp = await http.getJson<RenderResponseRaw>(url, signal);
     if (resp && resp.success !== false && Array.isArray(resp.results)) {
       const items: MarketSearchItem[] = [];
       for (const r of resp.results) {

@@ -29,6 +29,14 @@ export class SteamHttpError extends Error {
   }
 }
 
+/** Запрос прерван по AbortSignal (нажат «Стоп» / сработал предохранитель). */
+export class SteamAbortError extends Error {
+  constructor() {
+    super("Запрос отменён");
+    this.name = "SteamAbortError";
+  }
+}
+
 function shortenUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -46,9 +54,29 @@ function shortenUrl(url: string): string {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Пауза, прерываемая через AbortSignal (для мгновенной остановки сбора). */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new SteamAbortError());
+      return;
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new SteamAbortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
+
+// Сколько раз повторять на 429: коротко. При лимите долбить бесполезно —
+// проход сам остановится предохранителем в runner.
+const RATE_LIMIT_RETRIES = 1;
+const RATE_LIMIT_PAUSE_MS = 3000;
 
 /** Экспоненциальная пауза 2s,4s,8s,16s + джиттер до 1s. */
 function backoffMs(attempt: number): number {
@@ -116,8 +144,8 @@ export class SteamHttp {
     }
   }
 
-  async getJson<T>(url: string): Promise<T> {
-    const text = await this.getText(url);
+  async getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+    const text = await this.getText(url, signal);
     try {
       return JSON.parse(text) as T;
     } catch {
@@ -125,18 +153,23 @@ export class SteamHttp {
     }
   }
 
-  getText(url: string): Promise<string> {
+  getText(url: string, signal?: AbortSignal): Promise<string> {
     // оборачиваем в очередь, чтобы соблюсти rate-limit между всеми запросами
-    return this.queue.add(() => this.fetchWithRetry(url), {
+    return this.queue.add(() => this.fetchWithRetry(url, signal), {
       throwOnTimeout: true,
     }) as Promise<string>;
   }
 
-  private async fetchWithRetry(url: string): Promise<string> {
+  private async fetchWithRetry(
+    url: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
     let lastErr: unknown;
     let forbiddenSeen = false;
+    let rateLimitTries = 0;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      if (signal?.aborted) throw new SteamAbortError();
       try {
         const res = await fetch(url, {
           headers: {
@@ -144,6 +177,7 @@ export class SteamHttp {
             "Accept-Language": "ru-RU,ru;q=0.9",
             Accept: "application/json, text/javascript, text/html, */*; q=0.01",
           },
+          signal,
           // undici-специфичное поле, в типах RequestInit его нет
           ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
         } as RequestInit);
@@ -162,22 +196,33 @@ export class SteamHttp {
             throw new SteamBlockedError(url);
           }
           forbiddenSeen = true;
-          await sleep(2000);
+          await sleep(2000, signal);
           continue;
         }
 
-        // 429 / 5xx — ретраим с паузой.
-        if (res.status === 429 || res.status >= 500) {
+        // 429 — лимит. Быстрый отказ: один короткий повтор, затем ошибка
+        // (решение «остановить весь проход» принимает предохранитель в runner).
+        if (res.status === 429) {
+          if (rateLimitTries >= RATE_LIMIT_RETRIES) {
+            console.warn(`[steam] GET ${shortenUrl(url)} -> 429 (лимит)`);
+            throw new SteamHttpError(429, url);
+          }
+          rateLimitTries++;
+          attempt--; // короткий 429-повтор не тратит общий бюджет ретраев
+          await sleep(RATE_LIMIT_PAUSE_MS, signal);
+          continue;
+        }
+
+        // 5xx — ретраим с экспоненциальной паузой.
+        if (res.status >= 500) {
           const retriable = attempt < this.maxRetries;
-          let pause = backoffMs(attempt);
-          // Бан по 429 у Steam держится минуты — ждём 30s, 60s, 120s, 240s.
-          if (res.status === 429) pause = 30000 * 2 ** attempt;
+          const pause = backoffMs(attempt);
           console.warn(
             `[steam] GET ${shortenUrl(url)} -> ${res.status} ` +
               `(попытка ${attempt + 1}${retriable ? `, пауза ${pause}ms` : ", ретраи исчерпаны"})`,
           );
           if (!retriable) throw new SteamHttpError(res.status, url);
-          await sleep(pause);
+          await sleep(pause, signal);
           continue;
         }
 
@@ -185,9 +230,17 @@ export class SteamHttp {
         console.warn(`[steam] GET ${shortenUrl(url)} -> ${res.status}`);
         throw new SteamHttpError(res.status, url);
       } catch (err) {
-        // Наши собственные «терминальные» ошибки не глушим.
-        if (err instanceof SteamBlockedError || err instanceof SteamHttpError) {
+        // Отмена и наши «терминальные» ошибки не глушим и не ретраим.
+        if (
+          err instanceof SteamAbortError ||
+          err instanceof SteamBlockedError ||
+          err instanceof SteamHttpError
+        ) {
           throw err;
+        }
+        // fetch при abort бросает AbortError (DOMException) — трактуем как отмену.
+        if (signal?.aborted || (err instanceof Error && err.name === "AbortError")) {
+          throw new SteamAbortError();
         }
         // Сетевая ошибка (fetch бросил) — ретраим.
         lastErr = err;
@@ -199,7 +252,7 @@ export class SteamHttp {
             `(попытка ${attempt + 1}${retriable ? `, пауза ${pause}ms` : ", ретраи исчерпаны"})`,
         );
         if (!retriable) break;
-        await sleep(pause);
+        await sleep(pause, signal);
       }
     }
 

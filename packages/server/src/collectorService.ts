@@ -106,12 +106,15 @@ export class CollectorService {
     this.lastName = p.lastName;
   };
 
-  private finish(err?: unknown): void {
+  private finish(err?: unknown, note?: string): void {
     this.running = false;
     this.finishedAt = new Date().toISOString();
     this.controller = null;
     if (err !== undefined) {
       this.lastError = err instanceof Error ? err.message : String(err);
+    } else if (note) {
+      // Причина авто-остановки (например, предохранитель 429).
+      this.lastError = note;
     }
   }
 
@@ -143,7 +146,7 @@ export class CollectorService {
       onProgress: this.onProgress,
       signal: controller.signal,
     })
-      .then(() => this.finish())
+      .then((summary) => this.finish(undefined, summary.stoppedReason))
       .catch((err) => this.finish(err));
     return this.getStatus();
   }
@@ -161,7 +164,7 @@ export class CollectorService {
       onProgress: this.onProgress,
       signal: controller.signal,
     })
-      .then(() => this.finish())
+      .then((summary) => this.finish(undefined, summary.stoppedReason))
       .catch((err) => this.finish(err));
     return this.getStatus();
   }

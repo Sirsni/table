@@ -47,6 +47,7 @@ export async function fetchOrderBook(
   appId: number,
   marketHashName: string,
   currency?: number,
+  signal?: AbortSignal,
 ): Promise<OrderBook> {
   // qp — JSON-массив [appId, name]; URLSearchParams корректно кодирует
   // пробелы/& /кавычки.
@@ -55,7 +56,7 @@ export async function fetchOrderBook(
   if (currency != null) params.set("currency", String(currency));
   const url = `https://steamcommunity.com/market/orderbook?${params.toString()}`;
 
-  const data = await http.getJson<OrderBookResponseRaw>(url);
+  const data = await http.getJson<OrderBookResponseRaw>(url, signal);
   if (!data.success || !data.data) {
     throw new Error(
       `orderbook вернул success=${data.success} для "${marketHashName}" (app ${appId})`,
