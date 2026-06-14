@@ -102,7 +102,7 @@ async function cmdProbe(http: SteamHttp, args: Args) {
     );
   }
   console.log(`probe: app=${args.app}, "${args.name}"`);
-  const ob = await fetchOrderBook(http, args.app, args.name, args.currency);
+  const ob = await fetchOrderBook(http, args.app, args.name, args.currency ?? 1);
   const buy = ob.highestBuyOrder;
   const sell = ob.lowestSellOrder;
   console.log(`  валюта (eCurrency): ${ob.currency ?? "—"}`);
@@ -132,7 +132,7 @@ async function cmdUpdatePrices(
   args: Args,
 ) {
   const limit = args.limit ?? 100;
-  const currency = args.currency; // если не задан — Steam выберет по гео-IP
+  const currency = args.currency ?? 1; // по умолчанию USD — не зависит от гео-IP VPN
   const items = listItemsForPriceUpdate(db, args.app, limit);
   console.log(
     `update-prices: app=${args.app}, к обновлению ${items.length} предметов.`,

@@ -72,8 +72,17 @@ export class SteamHttp {
   private readonly dispatcher: ProxyAgent | undefined;
 
   constructor(opts: SteamHttpOptions = {}) {
-    const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+    // Интервал между запросами: опция -> env STEAM_INTERVAL_MS -> дефолт 3000.
+    const envInterval = Number(process.env.STEAM_INTERVAL_MS);
+    const intervalMs =
+      opts.intervalMs ??
+      (Number.isFinite(envInterval) && envInterval > 0
+        ? envInterval
+        : DEFAULT_INTERVAL_MS);
     this.maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
+    if (intervalMs !== DEFAULT_INTERVAL_MS) {
+      console.log(`[steam] интервал между запросами: ${intervalMs}ms`);
+    }
     this.queue = new PQueue({
       concurrency: 1,
       interval: intervalMs,
