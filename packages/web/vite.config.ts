@@ -4,6 +4,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   server: {
+    // Явно IPv4: иначе браузер идёт на localhost -> ::1, а Vite слушает
+    // 127.0.0.1 -> ERR_CONNECTION_REFUSED. host фиксирует и бинд, и автооткрытие.
+    host: "127.0.0.1",
     port: 5173,
     open: true,
     proxy: {
