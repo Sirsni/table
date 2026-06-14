@@ -83,10 +83,17 @@ export class SteamHttp {
     if (intervalMs !== DEFAULT_INTERVAL_MS) {
       console.log(`[steam] интервал между запросами: ${intervalMs}ms`);
     }
+    // Параллельность: env STEAM_CONCURRENCY -> дефолт 1 (серийно).
+    const envConc = Number(process.env.STEAM_CONCURRENCY);
+    const concurrency =
+      Number.isFinite(envConc) && envConc > 0 ? Math.floor(envConc) : 1;
+    if (concurrency > 1) {
+      console.log(`[steam] параллельных запросов: ${concurrency}`);
+    }
     this.queue = new PQueue({
-      concurrency: 1,
+      concurrency,
       interval: intervalMs,
-      intervalCap: 1,
+      intervalCap: concurrency,
     });
     // STEAM_PROXY=http://user:pass@host:port — пускаем запросы через прокси,
     // если прямой IP забанен/задушен Steam (CGNAT, датацентр и т.п.).
