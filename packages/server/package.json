@@ -1,0 +1,26 @@
+{
+  "name": "@table/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@fastify/static": "^8",
+    "@table/collector": "*",
+    "@table/shared": "*",
+    "better-sqlite3": "^11",
+    "fastify": "^5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7",
+    "@types/node": "^22",
+    "tsx": "^4",
+    "typescript": "^5.6"
+  }
+}

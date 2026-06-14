@@ -1,18 +1,13 @@
 import type Database from "better-sqlite3";
 import { openDb } from "./db.js";
 import { SteamHttp } from "./steam/http.js";
-import { iterateMarketItems } from "./steam/searchRender.js";
 import { fetchOrderBook } from "./steam/orderbook.js";
-import {
-  upsertItem,
-  insertSnapshot,
-  listItemsForPriceUpdate,
-  topByMargin,
-} from "./repo.js";
-import { profit, marginPct, sellerReceives } from "./economics.js";
+import { topByMargin } from "./repo.js";
+import { syncItems, updatePrices } from "./runner.js";
+import type { CollectProgress } from "./runner.js";
+import { profit, marginPct, sellerReceives } from "@table/shared";
 
 const VALID_APPS = new Set([730, 570, 252490]);
-const PROVIDER = "steam";
 
 interface Args {
   app: number;
@@ -82,15 +77,18 @@ function padLeft(s: string, w: number): string {
 async function cmdSyncItems(db: Database.Database, http: SteamHttp, args: Args) {
   const maxPages = args.pages ?? 5;
   console.log(`sync-items: app=${args.app}, pages=${maxPages}`);
-  let count = 0;
-  for await (const item of iterateMarketItems(http, args.app, { maxPages })) {
-    upsertItem(db, args.app, item.marketHashName, item.iconUrl);
-    count++;
-    if (count % 100 === 0) {
-      console.log(`  ...обработано ${count} предметов`);
-    }
-  }
-  console.log(`sync-items: готово, upsert ${count} предметов (app ${args.app}).`);
+  const summary = await syncItems(db, http, {
+    app: args.app,
+    pages: maxPages,
+    onProgress: (p: CollectProgress) => {
+      if (p.processed % 100 === 0) {
+        console.log(`  ...обработано ${p.processed} предметов`);
+      }
+    },
+  });
+  console.log(
+    `sync-items: готово, upsert ${summary.ok} предметов (app ${args.app}).`,
+  );
 }
 
 /** Точечная проверка одного предмета по имени (без БД). */
@@ -133,44 +131,34 @@ async function cmdUpdatePrices(
 ) {
   const limit = args.limit ?? 100;
   const currency = args.currency ?? 1; // по умолчанию USD — не зависит от гео-IP VPN
-  const items = listItemsForPriceUpdate(db, args.app, limit);
-  console.log(
-    `update-prices: app=${args.app}, к обновлению ${items.length} предметов.`,
-  );
-  let ok = 0;
-  let fail = 0;
-  const seenCurrencies = new Set<number>();
-  for (const it of items) {
-    try {
-      const ob = await fetchOrderBook(http, args.app, it.market_hash_name, currency);
-      if (ob.currency !== null) seenCurrencies.add(ob.currency);
-      insertSnapshot(db, {
-        itemId: it.id,
-        provider: PROVIDER,
-        buyOrder: ob.highestBuyOrder,
-        sellPrice: ob.lowestSellOrder,
-        volume: ob.sellOrderCount, // кол-во лотов на продажу — прокси ликвидности
-      });
-      ok++;
-      console.log(
-        `  [ok] ${it.market_hash_name}: buy=${money(ob.highestBuyOrder)} ` +
-          `sell=${money(ob.lowestSellOrder)}`,
-      );
-    } catch (err) {
-      fail++;
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`  [fail] ${it.market_hash_name}: ${msg}`);
-    }
-  }
-  console.log(`update-prices: готово, успешно ${ok}, ошибок ${fail}.`);
-  if (seenCurrencies.size > 1) {
-    console.warn(
-      `  ⚠ разные валюты в ответах: ${[...seenCurrencies].join(", ")} — ` +
-        "цены несравнимы. Зафиксируй валюту флагом --currency (5=RUB, 1=USD).",
+  let lastLogged: string | null = null;
+  const summary = await updatePrices(db, http, {
+    app: args.app,
+    limit,
+    currency,
+    onProgress: (p: CollectProgress) => {
+      // Заголовок печатаем на первом колбэке, когда total уже известен.
+      if (p.processed === 1) {
+        console.log(
+          `update-prices: app=${args.app}, к обновлению ${p.total} предметов.`,
+        );
+      }
+      // По одной строке на предмет: имя + накопленные счётчики.
+      if (p.lastName !== null && p.lastName !== lastLogged) {
+        lastLogged = p.lastName;
+        console.log(`  [${p.ok}/${p.processed}] ${p.lastName}`);
+      }
+    },
+  });
+  if (summary.processed === 0) {
+    console.log(
+      `update-prices: app=${args.app}, нет предметов к обновлению. Сначала запусти sync-items.`,
     );
-  } else if (seenCurrencies.size === 1) {
-    console.log(`  валюта ответа Steam (eCurrency): ${[...seenCurrencies][0]}`);
+    return;
   }
+  console.log(
+    `update-prices: готово, успешно ${summary.ok}, ошибок ${summary.fail}.`,
+  );
 }
 
 function cmdTop(db: Database.Database, args: Args) {

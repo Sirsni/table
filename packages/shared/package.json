@@ -7,9 +7,11 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p .",
-    "typecheck": "tsc -p . --noEmit"
+    "typecheck": "tsc -p . --noEmit",
+    "selftest": "tsx src/economics.selftest.ts"
   },
   "devDependencies": {
+    "tsx": "^4",
     "typescript": "^5.6"
   }
 }

@@ -17,6 +17,7 @@ export interface ItemLatestRow {
   buy_order: number | null;
   sell_price: number | null;
   volume: number | null;
+  currency: number | null;
   fetched_at: string;
 }
 
@@ -69,6 +70,7 @@ export interface SnapshotInput {
   buyOrder: number | null;
   sellPrice: number | null;
   volume: number | null;
+  currency: number | null;
 }
 
 /** Пишет snapshot цен. fetched_at проставляется БД по умолчанию. */
@@ -77,14 +79,15 @@ export function insertSnapshot(
   snap: SnapshotInput,
 ): void {
   db.prepare(
-    `INSERT INTO price_snapshots (item_id, provider, buy_order, sell_price, volume)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO price_snapshots (item_id, provider, buy_order, sell_price, volume, currency)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     snap.itemId,
     snap.provider,
     snap.buyOrder,
     snap.sellPrice,
     snap.volume,
+    snap.currency,
   );
 }
 
@@ -144,7 +147,7 @@ export function topByMargin(
   return db
     .prepare(
       `SELECT id, app_id, market_hash_name, item_nameid, icon_url, updated_at,
-              provider, buy_order, sell_price, volume, fetched_at
+              provider, buy_order, sell_price, volume, currency, fetched_at
        FROM items_latest
        WHERE app_id = ? AND buy_order IS NOT NULL AND sell_price IS NOT NULL
        LIMIT ?`,

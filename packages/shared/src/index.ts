@@ -1,3 +1,5 @@
+export * from "./economics.js";
+
 export const APP_IDS = { CS2: 730, DOTA2: 570, RUST: 252490 } as const;
 
 export type AppId = (typeof APP_IDS)[keyof typeof APP_IDS];

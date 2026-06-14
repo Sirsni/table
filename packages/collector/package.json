@@ -5,6 +5,13 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./runner": "./dist/runner.js",
+    "./db": "./dist/db.js",
+    "./repo": "./dist/repo.js",
+    "./steam/http": "./dist/steam/http.js"
+  },
   "scripts": {
     "build": "tsc -p .",
     "typecheck": "tsc -p . --noEmit",

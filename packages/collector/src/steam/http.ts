@@ -60,6 +60,7 @@ function backoffMs(attempt: number): number {
 export interface SteamHttpOptions {
   intervalMs?: number;
   maxRetries?: number;
+  concurrency?: number;
 }
 
 /**
@@ -83,10 +84,14 @@ export class SteamHttp {
     if (intervalMs !== DEFAULT_INTERVAL_MS) {
       console.log(`[steam] интервал между запросами: ${intervalMs}ms`);
     }
-    // Параллельность: env STEAM_CONCURRENCY -> дефолт 1 (серийно).
+    // Параллельность: опция -> env STEAM_CONCURRENCY -> дефолт 1 (серийно).
     const envConc = Number(process.env.STEAM_CONCURRENCY);
-    const concurrency =
+    const envConcurrency =
       Number.isFinite(envConc) && envConc > 0 ? Math.floor(envConc) : 1;
+    const concurrency =
+      opts.concurrency != null && opts.concurrency > 0
+        ? Math.floor(opts.concurrency)
+        : envConcurrency;
     if (concurrency > 1) {
       console.log(`[steam] параллельных запросов: ${concurrency}`);
     }
