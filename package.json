@@ -8,7 +8,14 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "npm run build -w @table/shared && npm run build -w @table/collector",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "build": "npm run build -w @table/shared && npm run build -w @table/collector && npm run build -w @table/server && npm run build -w @table/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev": "concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w @table/server",
+    "dev:web": "npm run dev -w @table/web",
+    "start": "npm run start -w @table/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9"
   }
 }
