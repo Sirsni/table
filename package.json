@@ -10,6 +10,7 @@
   "scripts": {
     "build": "npm run build -w @table/shared && npm run build -w @table/collector && npm run build -w @table/server && npm run build -w @table/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "predev": "npm run build -w @table/shared && npm run build -w @table/collector",
     "dev": "concurrently -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
     "dev:server": "npm run dev -w @table/server",
     "dev:web": "npm run dev -w @table/web",
