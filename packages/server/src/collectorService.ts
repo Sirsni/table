@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import { SteamHttp } from "@table/collector/steam/http";
 import type { SteamHttpOptions } from "@table/collector/steam/http";
-import { syncItems, updatePrices } from "@table/collector/runner";
+import { syncItems, updatePrices, enrichHistory } from "@table/collector/runner";
 import type { CollectProgress } from "@table/collector/runner";
 
 /**
@@ -14,7 +14,7 @@ import type { CollectProgress } from "@table/collector/runner";
  * guard одновременно.
  */
 
-export type CollectorKind = "sync" | "update" | null;
+export type CollectorKind = "sync" | "update" | "enrich" | null;
 
 export interface CollectorStatus {
   running: boolean;
@@ -37,6 +37,14 @@ export interface StartSyncParams {
 }
 
 export interface StartUpdateParams {
+  app: number;
+  limit: number;
+  currency?: number;
+  concurrency?: number;
+  intervalMs?: number;
+}
+
+export interface StartEnrichParams {
   app: number;
   limit: number;
   currency?: number;
@@ -158,6 +166,24 @@ export class CollectorService {
       intervalMs: params.intervalMs,
     });
     void updatePrices(this.db, http, {
+      app: params.app,
+      limit: params.limit,
+      currency: params.currency,
+      onProgress: this.onProgress,
+      signal: controller.signal,
+    })
+      .then((summary) => this.finish(undefined, summary.stoppedReason))
+      .catch((err) => this.finish(err));
+    return this.getStatus();
+  }
+
+  startEnrich(params: StartEnrichParams): CollectorStatus {
+    const controller = this.begin("enrich");
+    const http = this.makeHttp({
+      concurrency: params.concurrency,
+      intervalMs: params.intervalMs,
+    });
+    void enrichHistory(this.db, http, {
       app: params.app,
       limit: params.limit,
       currency: params.currency,

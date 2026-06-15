@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc -p .",
     "typecheck": "tsc -p . --noEmit",
-    "cli": "tsx src/index.ts"
+    "cli": "node --env-file-if-exists=../../.env --import tsx src/index.ts"
   },
   "dependencies": {
     "@table/shared": "*",

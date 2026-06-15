@@ -100,6 +100,8 @@ export class SteamHttp {
   private readonly maxRetries: number;
   private readonly dispatcher: ProxyAgent | undefined;
   private readonly concurrencyValue: number;
+  /** Готовое значение заголовка Cookie (или undefined, если не задан). */
+  private readonly cookie: string | undefined;
 
   /** Сконфигурированная параллельность — размер пула для вызывающего (runner). */
   get concurrency(): number {
@@ -142,6 +144,21 @@ export class SteamHttp {
       this.dispatcher = new ProxyAgent(proxyUrl);
       console.log(`[steam] использую прокси из STEAM_PROXY`);
     }
+    // STEAM_COOKIE — cookie залогиненного аккаунта (нужен для pricehistory).
+    // Если задан «голый» токен без '=', оборачиваем как steamLoginSecure=<token>.
+    // Значение НЕ логируем.
+    const rawCookie = process.env.STEAM_COOKIE?.trim();
+    if (rawCookie) {
+      this.cookie = rawCookie.includes("=")
+        ? rawCookie
+        : `steamLoginSecure=${rawCookie}`;
+      console.log(`[steam] STEAM_COOKIE задан — запросы пойдут с авторизацией`);
+    }
+  }
+
+  /** Есть ли cookie авторизации (для понятных ошибок у вызывающих). */
+  get hasCookie(): boolean {
+    return this.cookie !== undefined;
   }
 
   async getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
@@ -176,6 +193,8 @@ export class SteamHttp {
             "User-Agent": USER_AGENT,
             "Accept-Language": "ru-RU,ru;q=0.9",
             Accept: "application/json, text/javascript, text/html, */*; q=0.01",
+            // Cookie добавляем только если задан — иначе запрос как раньше.
+            ...(this.cookie ? { Cookie: this.cookie } : {}),
           },
           signal,
           // undici-специфичное поле, в типах RequestInit его нет

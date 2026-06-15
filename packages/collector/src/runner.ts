@@ -4,7 +4,15 @@ import { SteamHttpError } from "./steam/http.js";
 import { fetchMarketPage, MARKET_PAGE_SIZE } from "./steam/searchRender.js";
 import type { MarketSearchItem } from "./steam/searchRender.js";
 import { fetchOrderBook } from "./steam/orderbook.js";
-import { upsertItem, insertSnapshot, listItemsForPriceUpdate } from "./repo.js";
+import { fetchPriceHistory } from "./steam/pricehistory.js";
+import { computeStats } from "./stats.js";
+import {
+  upsertItem,
+  insertSnapshot,
+  listItemsForPriceUpdate,
+  listItemsForHistoryUpdate,
+  upsertItemStats,
+} from "./repo.js";
 
 /**
  * Ядро сбора, вынесенное из CLI, чтобы его могли вызывать и консоль (index.ts),
@@ -46,6 +54,14 @@ export interface SyncItemsOptions {
 }
 
 export interface UpdatePricesOptions {
+  app: number;
+  limit: number;
+  currency?: number;
+  onProgress?: (p: CollectProgress) => void;
+  signal?: AbortSignal;
+}
+
+export interface EnrichHistoryOptions {
   app: number;
   limit: number;
   currency?: number;
@@ -215,6 +231,78 @@ export async function updatePrices(
           volume: ob.sellOrderCount, // кол-во лотов на продажу — прокси ликвидности
           currency: ob.currency,
         });
+        ok++;
+        rateLimited = 0; // успех сбрасывает счётчик 429
+      } catch (err) {
+        if (ctrl.signal.aborted) return; // отмена — не считаем
+        fail++;
+        if (isRateLimit(err)) {
+          rateLimited++;
+          if (rateLimited >= RATE_LIMIT_TRIP) {
+            stoppedReason = RATE_LIMIT_MESSAGE;
+            ctrl.abort();
+          }
+        }
+      }
+      processed++;
+      emit();
+    }
+  };
+
+  const poolSize = Math.max(1, Math.min(http.concurrency, total || 1));
+  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+
+  return { ok, fail, processed, stoppedReason };
+}
+
+/**
+ * Обновляет историю продаж/ликвидность: берёт предметы из
+ * listItemsForHistoryUpdate, для каждого тянет pricehistory, считает агрегаты
+ * (computeStats) и пишет их в item_stats. Пул воркеров (размер = http.concurrency),
+ * отмена (signal/«Стоп») и предохранитель 429 — как в updatePrices.
+ *
+ * pricehistory требует STEAM_COOKIE; без него fetchPriceHistory бросит понятную
+ * ошибку — она считается обычным fail предмета (а не 429), проход не валится.
+ */
+export async function enrichHistory(
+  db: Database.Database,
+  http: SteamHttp,
+  opts: EnrichHistoryOptions,
+): Promise<CollectSummary> {
+  const { app, limit, onProgress } = opts;
+  const currency = opts.currency ?? 1; // валюта запроса истории (1 = USD)
+  const ctrl = linkedController(opts.signal);
+
+  const items = listItemsForHistoryUpdate(db, app, limit);
+  const total = items.length;
+  let processed = 0;
+  let ok = 0;
+  let fail = 0;
+  let lastName: string | null = null;
+  let rateLimited = 0;
+  let stoppedReason: string | undefined;
+
+  const emit = () => {
+    onProgress?.({ processed, total, ok, fail, lastName });
+  };
+
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (!ctrl.signal.aborted) {
+      const i = next++;
+      if (i >= items.length) return;
+      const it = items[i];
+      lastName = it.market_hash_name;
+      try {
+        const history = await fetchPriceHistory(
+          http,
+          app,
+          it.market_hash_name,
+          currency,
+          ctrl.signal,
+        );
+        const stats = computeStats(history.points);
+        upsertItemStats(db, it.id, { ...stats, currency });
         ok++;
         rateLimited = 0; // успех сбрасывает счётчик 429
       } catch (err) {

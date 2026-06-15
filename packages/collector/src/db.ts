@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
   fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_item_time ON price_snapshots(item_id, fetched_at DESC);
+CREATE TABLE IF NOT EXISTS item_stats (
+  item_id INTEGER PRIMARY KEY REFERENCES items(id),
+  sales_7d INTEGER,
+  sales_30d INTEGER,
+  avg_7d INTEGER,
+  avg_30d INTEGER,
+  last_price INTEGER,
+  last_date TEXT,
+  currency INTEGER,
+  fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 // View пересоздаём всегда: тело могло измениться между версиями (добавили currency).

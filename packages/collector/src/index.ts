@@ -3,7 +3,7 @@ import { openDb } from "./db.js";
 import { SteamHttp } from "./steam/http.js";
 import { fetchOrderBook } from "./steam/orderbook.js";
 import { topByMargin } from "./repo.js";
-import { syncItems, updatePrices } from "./runner.js";
+import { syncItems, updatePrices, enrichHistory } from "./runner.js";
 import type { CollectProgress } from "./runner.js";
 import { profit, marginPct, sellerReceives } from "@table/shared";
 
@@ -161,6 +161,42 @@ async function cmdUpdatePrices(
   );
 }
 
+async function cmdEnrichHistory(
+  db: Database.Database,
+  http: SteamHttp,
+  args: Args,
+) {
+  const limit = args.limit ?? 100;
+  const currency = args.currency ?? 1; // валюта запроса pricehistory (1 = USD)
+  let lastLogged: string | null = null;
+  const summary = await enrichHistory(db, http, {
+    app: args.app,
+    limit,
+    currency,
+    onProgress: (p: CollectProgress) => {
+      if (p.processed === 1) {
+        console.log(
+          `enrich-history: app=${args.app}, к обновлению истории ${p.total} предметов.`,
+        );
+      }
+      if (p.lastName !== null && p.lastName !== lastLogged) {
+        lastLogged = p.lastName;
+        console.log(`  [${p.ok}/${p.processed}] ${p.lastName}`);
+      }
+    },
+  });
+  if (summary.processed === 0) {
+    console.log(
+      `enrich-history: app=${args.app}, нет предметов к обновлению. Сначала запусти sync-items.`,
+    );
+    return;
+  }
+  console.log(
+    `enrich-history: готово, успешно ${summary.ok}, ошибок ${summary.fail}.` +
+      (summary.stoppedReason ? `\n  ${summary.stoppedReason}` : ""),
+  );
+}
+
 function cmdTop(db: Database.Database, args: Args) {
   const limit = args.limit ?? 20;
   // topByMargin отдаёт сырые поля; маржу считаем здесь. Чтобы топ по марже был
@@ -224,6 +260,7 @@ function usage(): void {
       "Команды:",
       "  sync-items    --app 730 [--pages 5]                список предметов -> БД",
       "  update-prices --app 730 [--limit 100] [--currency 5]  стакан -> snapshot",
+      "  enrich-history --app 730 [--limit 100] [--currency 1] история продаж -> item_stats",
       "  probe         --app 730 --name \"<имя>\" [--currency 5]  проверка 1 предмета",
       "  top           --app 730 [--limit 20]               топ по марже в консоль",
       "",
@@ -281,6 +318,9 @@ async function main(): Promise<void> {
         break;
       case "update-prices":
         await cmdUpdatePrices(db, http, args);
+        break;
+      case "enrich-history":
+        await cmdEnrichHistory(db, http, args);
         break;
       case "probe":
         await cmdProbe(http, args);

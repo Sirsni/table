@@ -135,6 +135,72 @@ export function listItemsForPriceUpdate(
 }
 
 /**
+ * Предметы для обновления истории продаж (item_stats): сперва те, у кого нет
+ * записи в item_stats, затем по давности item_stats.fetched_at (старые сначала).
+ * Аналог listItemsForPriceUpdate.
+ */
+export function listItemsForHistoryUpdate(
+  db: Database.Database,
+  appId: number,
+  limit: number,
+): ItemRow[] {
+  return db
+    .prepare(
+      `SELECT i.id, i.app_id, i.market_hash_name, i.item_nameid, i.icon_url, i.updated_at
+       FROM items i
+       LEFT JOIN item_stats st ON st.item_id = i.id
+       WHERE i.app_id = ?
+       ORDER BY (st.item_id IS NULL) DESC, st.fetched_at ASC, i.id ASC
+       LIMIT ?`,
+    )
+    .all(appId, limit) as ItemRow[];
+}
+
+export interface ItemStatsInput {
+  sales7d: number;
+  sales30d: number;
+  avg7d: number | null;
+  avg30d: number | null;
+  lastPrice: number | null;
+  lastDate: string | null;
+  currency: number;
+}
+
+/**
+ * Вставляет/обновляет агрегаты ликвидности предмета (item_stats).
+ * fetched_at всегда переписывается на текущее время.
+ */
+export function upsertItemStats(
+  db: Database.Database,
+  itemId: number,
+  stats: ItemStatsInput,
+): void {
+  db.prepare(
+    `INSERT INTO item_stats
+       (item_id, sales_7d, sales_30d, avg_7d, avg_30d, last_price, last_date, currency, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(item_id) DO UPDATE SET
+       sales_7d = excluded.sales_7d,
+       sales_30d = excluded.sales_30d,
+       avg_7d = excluded.avg_7d,
+       avg_30d = excluded.avg_30d,
+       last_price = excluded.last_price,
+       last_date = excluded.last_date,
+       currency = excluded.currency,
+       fetched_at = datetime('now')`,
+  ).run(
+    itemId,
+    stats.sales7d,
+    stats.sales30d,
+    stats.avg7d,
+    stats.avg30d,
+    stats.lastPrice,
+    stats.lastDate,
+    stats.currency,
+  );
+}
+
+/**
  * Топ предметов по последнему snapshot (items_latest). Маржу считает
  * вызывающий через economics — здесь возвращаем сырые поля.
  * Берём только строки, где есть обе цены (buy_order и sell_price).

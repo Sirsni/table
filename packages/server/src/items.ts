@@ -9,7 +9,16 @@ import { toUsdCents } from "./fx.js";
  * она безразмерна) и зависят от текущих курсов FX.
  */
 
-export type SortKey = "margin" | "profit" | "buy" | "sell" | "volume" | "name";
+export type SortKey =
+  | "margin"
+  | "profit"
+  | "buy"
+  | "sell"
+  | "volume"
+  | "name"
+  | "sales30d"
+  | "sales7d"
+  | "dip";
 export type SortDir = "asc" | "desc";
 
 export interface QueryItemsParams {
@@ -19,6 +28,9 @@ export interface QueryItemsParams {
   minPriceUsd?: number;
   maxPriceUsd?: number;
   minVolume?: number;
+  minSales7d?: number;
+  minSales30d?: number;
+  minDipPct?: number;
   sort?: SortKey;
   dir?: SortDir;
   limit?: number;
@@ -37,10 +49,21 @@ export interface ItemDto {
   volume: number | null;
   currency: number | null;
   fetchedAt: string;
+  /** Продажи за 7 дней (history) либо null, если истории нет. */
+  sales7d: number | null;
+  /** Продажи за 30 дней (history) либо null. */
+  sales30d: number | null;
+  /** VWAP за 30 дней в USD либо null. */
+  avg30dUsd: number | null;
+  /** Цена последней сделки истории в USD либо null. */
+  lastPriceUsd: number | null;
+  /** Скидка текущей продажи относительно VWAP-30д, % (>0 = ниже средней). */
+  dipPct: number | null;
 }
 
 /** Строка items_latest, нужные столбцы. */
 interface LatestRow {
+  id: number;
   market_hash_name: string;
   app_id: number;
   icon_url: string | null;
@@ -49,6 +72,18 @@ interface LatestRow {
   volume: number | null;
   currency: number | null;
   fetched_at: string;
+}
+
+/** Строка item_stats. */
+interface StatsRow {
+  item_id: number;
+  sales_7d: number | null;
+  sales_30d: number | null;
+  avg_7d: number | null;
+  avg_30d: number | null;
+  last_price: number | null;
+  last_date: string | null;
+  currency: number | null;
 }
 
 const CANDIDATE_CAP = 20000;
@@ -60,6 +95,9 @@ const VALID_SORTS = new Set<SortKey>([
   "sell",
   "volume",
   "name",
+  "sales30d",
+  "sales7d",
+  "dip",
 ]);
 
 function round2(n: number | null): number | null {
@@ -91,13 +129,31 @@ export function queryItems(
 
   const rows = db
     .prepare(
-      `SELECT market_hash_name, app_id, icon_url, buy_order, sell_price,
+      `SELECT id, market_hash_name, app_id, icon_url, buy_order, sell_price,
               volume, currency, fetched_at
        FROM items_latest
        WHERE ${where.join(" AND ")}
        LIMIT ${CANDIDATE_CAP}`,
     )
     .all(...sqlParams) as LatestRow[];
+
+  // Подтягиваем агрегаты ликвидности (item_stats) одним запросом по тем же id и
+  // мержим в JS: items_latest — это view, надёжнее не усложнять её JOIN-ом.
+  const statsById = new Map<number, StatsRow>();
+  if (rows.length > 0) {
+    const ids = rows.map((r) => r.id);
+    // IN (...) с плейсхолдерами; ids < CANDIDATE_CAP, в лимит SQLite укладываемся.
+    const placeholders = ids.map(() => "?").join(",");
+    const statRows = db
+      .prepare(
+        `SELECT item_id, sales_7d, sales_30d, avg_7d, avg_30d,
+                last_price, last_date, currency
+         FROM item_stats
+         WHERE item_id IN (${placeholders})`,
+      )
+      .all(...ids) as StatsRow[];
+    for (const s of statRows) statsById.set(s.item_id, s);
+  }
 
   // Преобразуем в DTO с конвертацией в USD.
   let dtos: ItemDto[] = rows.map((r) => {
@@ -110,6 +166,26 @@ export function queryItems(
     const receiveUsdCents = toUsdCents(sellerReceives(sell), r.currency);
     const profitUsdCents = toUsdCents(profit(buy, sell), r.currency);
     const margin = marginPct(buy, sell); // валютнонезависимо
+
+    const st = statsById.get(r.id);
+    // avg/last_price хранятся в валюте st.currency (валюта запроса pricehistory),
+    // приводим к USD-центам отдельно — она может отличаться от валюты снапшота.
+    const avg30UsdCents =
+      st && st.avg_30d !== null ? toUsdCents(st.avg_30d, st.currency) : null;
+    const lastPriceUsdCents =
+      st && st.last_price !== null
+        ? toUsdCents(st.last_price, st.currency)
+        : null;
+
+    // dipPct: насколько текущая продажа ниже средней (VWAP-30д). Обе цены
+    // приводим к одной базе (USD-центы), чтобы валюты снапшота и истории не
+    // искажали сравнение. >0 = текущая продажа дешевле средней (скидка).
+    let dipPct: number | null = null;
+    if (avg30UsdCents !== null && avg30UsdCents > 0 && sellUsdCents !== null) {
+      dipPct = round2(
+        ((avg30UsdCents - sellUsdCents) / avg30UsdCents) * 100,
+      );
+    }
 
     return {
       name: r.market_hash_name,
@@ -126,6 +202,11 @@ export function queryItems(
       volume: r.volume,
       currency: r.currency,
       fetchedAt: r.fetched_at,
+      sales7d: st ? st.sales_7d : null,
+      sales30d: st ? st.sales_30d : null,
+      avg30dUsd: centsToUsd(avg30UsdCents),
+      lastPriceUsd: centsToUsd(lastPriceUsdCents),
+      dipPct,
     };
   });
 
@@ -145,6 +226,18 @@ export function queryItems(
   if (params.minVolume !== undefined && Number.isFinite(params.minVolume)) {
     const min = params.minVolume;
     dtos = dtos.filter((d) => d.volume !== null && d.volume >= min);
+  }
+  if (params.minSales7d !== undefined && Number.isFinite(params.minSales7d)) {
+    const min = params.minSales7d;
+    dtos = dtos.filter((d) => d.sales7d !== null && d.sales7d >= min);
+  }
+  if (params.minSales30d !== undefined && Number.isFinite(params.minSales30d)) {
+    const min = params.minSales30d;
+    dtos = dtos.filter((d) => d.sales30d !== null && d.sales30d >= min);
+  }
+  if (params.minDipPct !== undefined && Number.isFinite(params.minDipPct)) {
+    const min = params.minDipPct;
+    dtos = dtos.filter((d) => d.dipPct !== null && d.dipPct >= min);
   }
 
   // Сортировка.
@@ -166,6 +259,12 @@ export function queryItems(
         return d.sellUsd;
       case "volume":
         return d.volume;
+      case "sales30d":
+        return d.sales30d;
+      case "sales7d":
+        return d.sales7d;
+      case "dip":
+        return d.dipPct;
       default:
         return null;
     }

@@ -57,12 +57,25 @@ interface ItemsQuery {
   minPriceUsd?: string;
   maxPriceUsd?: string;
   minVolume?: string;
+  minSales7d?: string;
+  minSales30d?: string;
+  minDipPct?: string;
   sort?: string;
   dir?: string;
   limit?: string;
 }
 
-const SORT_KEYS = new Set(["margin", "profit", "buy", "sell", "volume", "name"]);
+const SORT_KEYS = new Set([
+  "margin",
+  "profit",
+  "buy",
+  "sell",
+  "volume",
+  "name",
+  "sales30d",
+  "sales7d",
+  "dip",
+]);
 
 // ---- /api/items ----
 app.get<{ Querystring: ItemsQuery }>("/api/items", async (req) => {
@@ -80,6 +93,9 @@ app.get<{ Querystring: ItemsQuery }>("/api/items", async (req) => {
     minPriceUsd: num(q.minPriceUsd),
     maxPriceUsd: num(q.maxPriceUsd),
     minVolume: num(q.minVolume),
+    minSales7d: num(q.minSales7d),
+    minSales30d: num(q.minSales30d),
+    minDipPct: num(q.minDipPct),
     sort:
       sortRaw && SORT_KEYS.has(sortRaw) ? (sortRaw as SortKey) : undefined,
     dir: q.dir === "asc" ? ("asc" as SortDir) : q.dir === "desc" ? "desc" : undefined,
@@ -129,9 +145,20 @@ app.get<{ Querystring: MetaQuery }>("/api/meta", async (req, reply) => {
     )
     .all(app) as Array<{ currency: number }>;
 
+  const withStats = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM item_stats st
+         JOIN items i ON i.id = st.item_id
+         WHERE i.app_id = ?`,
+      )
+      .get(app) as { c: number }
+  ).c;
+
   return {
     total,
     priced,
+    withStats,
     lastFetched,
     fx: fxStatus(),
     currencies: currencyRows.map((r) => r.currency),
@@ -178,6 +205,32 @@ app.post<{ Body: UpdateBody }>("/api/collector/update", async (req, reply) => {
   const limit = num(body.limit) ?? 100;
   try {
     const status = collector.startUpdate({
+      app,
+      limit,
+      currency: num(body.currency),
+      concurrency: num(body.concurrency),
+      intervalMs: num(body.intervalMs),
+    });
+    return reply.code(202).send(status);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    return reply.code(409).send({ error });
+  }
+});
+
+interface EnrichBody {
+  app?: number;
+  limit?: number;
+  currency?: number;
+  concurrency?: number;
+  intervalMs?: number;
+}
+app.post<{ Body: EnrichBody }>("/api/collector/enrich", async (req, reply) => {
+  const body = req.body ?? {};
+  const app = num(body.app) ?? 730;
+  const limit = num(body.limit) ?? 100;
+  try {
+    const status = collector.startEnrich({
       app,
       limit,
       currency: num(body.currency),

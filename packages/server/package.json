@@ -5,10 +5,10 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/server.ts",
     "build": "tsc -p .",
     "typecheck": "tsc -p . --noEmit",
-    "start": "node dist/server.js"
+    "start": "node --env-file-if-exists=../../.env dist/server.js"
   },
   "dependencies": {
     "@fastify/static": "^8",
