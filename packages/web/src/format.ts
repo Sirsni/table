@@ -15,6 +15,19 @@ export function pct(n: number | null): string {
   return `${sign}${Math.abs(n).toFixed(2)}%`;
 }
 
+/** Форматирует проценты со знаком: "+5.20%" / "−3.10%" / "—" для null. */
+export function signedPct(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return "—";
+  const sign = n < 0 ? "−" : "+";
+  return `${sign}${Math.abs(n).toFixed(2)}%`;
+}
+
+/** Форматирует количество продаж: целое число или "—" для null. */
+export function count(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return "—";
+  return String(Math.round(n));
+}
+
 /**
  * Превращает iconUrl из ItemDto в готовый src для <img>.
  * - null -> null (нет иконки).

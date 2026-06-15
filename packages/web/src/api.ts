@@ -18,6 +18,11 @@ export interface ItemDto {
   volume: number | null;
   currency: number | null;
   fetchedAt: string;
+  sales7d: number | null;
+  sales30d: number | null;
+  avg30dUsd: number | null;
+  lastPriceUsd: number | null;
+  dipPct: number | null;
 }
 
 export interface FxStatus {
@@ -28,15 +33,25 @@ export interface FxStatus {
 export interface Meta {
   total: number;
   priced: number;
+  withStats: number;
   lastFetched: string | null;
   fx: FxStatus;
   currencies: number[];
 }
 
-export type SortKey = "margin" | "profit" | "buy" | "sell" | "volume" | "name";
+export type SortKey =
+  | "margin"
+  | "profit"
+  | "buy"
+  | "sell"
+  | "volume"
+  | "name"
+  | "sales30d"
+  | "sales7d"
+  | "dip";
 export type SortDir = "asc" | "desc";
 
-export type CollectorKind = "sync" | "update" | null;
+export type CollectorKind = "sync" | "update" | "enrich" | null;
 
 export interface CollectorStatus {
   running: boolean;
@@ -62,6 +77,9 @@ export interface FetchItemsParams {
   minPriceUsd?: number;
   maxPriceUsd?: number;
   minVolume?: number;
+  minSales7d?: number;
+  minSales30d?: number;
+  minDipPct?: number;
   sort?: SortKey;
   dir?: SortDir;
   limit?: number;
@@ -101,6 +119,9 @@ export async function fetchItems(params: FetchItemsParams): Promise<ItemDto[]> {
     minPriceUsd: params.minPriceUsd,
     maxPriceUsd: params.maxPriceUsd,
     minVolume: params.minVolume,
+    minSales7d: params.minSales7d,
+    minSales30d: params.minSales30d,
+    minDipPct: params.minDipPct,
     sort: params.sort,
     dir: params.dir,
     limit: params.limit,
@@ -155,6 +176,12 @@ export async function startUpdate(
   body: StartUpdateBody,
 ): Promise<CollectorStatus | ApiError> {
   return postJson<CollectorStatus>("/collector/update", body);
+}
+
+export async function startEnrich(
+  body: StartUpdateBody,
+): Promise<CollectorStatus | ApiError> {
+  return postJson<CollectorStatus>("/collector/enrich", body);
 }
 
 export async function stopCollector(): Promise<CollectorStatus> {

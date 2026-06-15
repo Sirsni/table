@@ -24,6 +24,8 @@ function toItemsParams(filters: FiltersValue): FetchItemsParams {
     minPriceUsd: parseNum(filters.minPriceUsd),
     maxPriceUsd: parseNum(filters.maxPriceUsd),
     minVolume: parseNum(filters.minVolume),
+    minSales30d: parseNum(filters.minSales30d),
+    minDipPct: parseNum(filters.minDipPct),
     sort: filters.sort,
     dir: filters.dir,
   };
@@ -119,6 +121,9 @@ export function App() {
               </span>
               <span>
                 С ценами: <strong>{meta.priced}</strong>
+              </span>
+              <span>
+                С историей: <strong>{meta.withStats}</strong>
               </span>
               <span>
                 Последний сбор: <strong>{shortMetaTime(meta.lastFetched)}</strong>

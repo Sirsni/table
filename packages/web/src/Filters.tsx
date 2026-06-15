@@ -8,6 +8,8 @@ export interface FiltersValue {
   minPriceUsd: string;
   maxPriceUsd: string;
   minVolume: string;
+  minSales30d: string;
+  minDipPct: string;
   sort: SortKey;
   dir: SortDir;
 }
@@ -19,6 +21,8 @@ export const DEFAULT_FILTERS: FiltersValue = {
   minPriceUsd: "",
   maxPriceUsd: "",
   minVolume: "",
+  minSales30d: "",
+  minDipPct: "",
   sort: "margin",
   dir: "desc",
 };
@@ -36,6 +40,8 @@ const SORT_KEYS: Array<{ value: SortKey; label: string }> = [
   { value: "sell", label: "Продажа $" },
   { value: "volume", label: "Объём" },
   { value: "name", label: "Название" },
+  { value: "sales30d", label: "Продаж/мес" },
+  { value: "dip", label: "Скидка %" },
 ];
 
 const DEBOUNCE_MS = 400;
@@ -72,6 +78,8 @@ export function Filters({ value, onChange }: FiltersProps) {
     local.minPriceUsd,
     local.maxPriceUsd,
     local.minVolume,
+    local.minSales30d,
+    local.minDipPct,
   ]);
 
   function setLocalField<K extends keyof FiltersValue>(
@@ -159,6 +167,27 @@ export function Filters({ value, onChange }: FiltersProps) {
             onChange={(e) => setLocalField("minVolume", e.target.value)}
             step="1"
             min="0"
+          />
+        </label>
+
+        <label className="field field--number">
+          Мин. продаж/мес
+          <input
+            type="number"
+            value={local.minSales30d}
+            onChange={(e) => setLocalField("minSales30d", e.target.value)}
+            step="1"
+            min="0"
+          />
+        </label>
+
+        <label className="field field--number">
+          Мин. скидка %
+          <input
+            type="number"
+            value={local.minDipPct}
+            onChange={(e) => setLocalField("minDipPct", e.target.value)}
+            step="0.1"
           />
         </label>
 

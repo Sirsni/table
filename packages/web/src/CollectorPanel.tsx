@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CollectorStatus } from "./api";
 import {
   getCollectorStatus,
+  startEnrich,
   startSync,
   startUpdate,
   stopCollector,
@@ -96,6 +97,23 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
   async function handleUpdate(): Promise<void> {
     setError(null);
     const result = await startUpdate({
+      app,
+      limit: num(limit, 100),
+      currency: num(currency, 1),
+      concurrency: num(concurrency, 1),
+      intervalMs: num(intervalMs, 1000),
+    });
+    if ("error" in result) {
+      setError(result.error);
+      return;
+    }
+    setStatus(result);
+    prevRunningRef.current = result.running;
+  }
+
+  async function handleEnrich(): Promise<void> {
+    setError(null);
+    const result = await startEnrich({
       app,
       limit: num(limit, 100),
       currency: num(currency, 1),
@@ -214,6 +232,14 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
               disabled={running}
             >
               Обновить цены
+            </button>
+            <button
+              type="button"
+              className="button--primary"
+              onClick={handleEnrich}
+              disabled={running}
+            >
+              Обновить историю
             </button>
             <button
               type="button"

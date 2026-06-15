@@ -7,7 +7,7 @@ import {
 } from "@tanstack/react-table";
 import type { ColumnDef, SortingFn, SortingState } from "@tanstack/react-table";
 import type { ItemDto } from "./api";
-import { iconSrc, pct, shortDateTime, usd } from "./format";
+import { count, iconSrc, pct, shortDateTime, signedPct, usd } from "./format";
 
 interface TableProps {
   data: ItemDto[];
@@ -118,6 +118,47 @@ const columns: ColumnDef<ItemDto>[] = [
     cell: ({ getValue }) => {
       const v = getValue<number | null>();
       return <span className="col-num">{v === null ? "—" : v}</span>;
+    },
+  },
+  {
+    id: "sales7d",
+    header: "Продаж/нед",
+    accessorKey: "sales7d",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => (
+      <span className="col-num">{count(getValue<number | null>())}</span>
+    ),
+  },
+  {
+    id: "sales30d",
+    header: "Продаж/мес",
+    accessorKey: "sales30d",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => (
+      <span className="col-num">{count(getValue<number | null>())}</span>
+    ),
+  },
+  {
+    id: "avg30dUsd",
+    header: "Средняя $",
+    accessorKey: "avg30dUsd",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => (
+      <span className="col-num">{usd(getValue<number | null>())}</span>
+    ),
+  },
+  {
+    id: "dipPct",
+    header: "Скидка %",
+    accessorKey: "dipPct",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return (
+        <span className={`col-num ${signedClass(v) ?? ""}`}>
+          {signedPct(v)}
+        </span>
+      );
     },
   },
   {
