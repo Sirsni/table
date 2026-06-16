@@ -2,7 +2,6 @@ import type Database from "better-sqlite3";
 import type { SteamHttp } from "./steam/http.js";
 import { SteamHttpError } from "./steam/http.js";
 import { fetchMarketPage, MARKET_PAGE_SIZE } from "./steam/searchRender.js";
-import type { MarketSearchItem } from "./steam/searchRender.js";
 import { fetchOrderBook } from "./steam/orderbook.js";
 import { fetchPriceHistory } from "./steam/pricehistory.js";
 import { computeStats } from "./stats.js";
@@ -96,6 +95,16 @@ function isRateLimit(err: unknown): boolean {
  * (размер = http.concurrency). Отмена (signal/«Стоп») и предохранитель 429
  * мгновенно прерывают запросы и паузы.
  */
+/**
+ * Загружает список предметов рынка (search/render) ПОСЛЕДОВАТЕЛЬНО и upsert-ит
+ * их в БД. Steam отдаёт total_count огромным (десятки тысяч), но реально на
+ * глубоких страницах возвращает пустой results (200, items=[]), особенно под
+ * параллельной нагрузкой — поэтому идём по страницам по порядку и ОСТАНАВЛИВАЕМСЯ
+ * после нескольких подряд пустых страниц (а не молотим все offset'ы до
+ * total_count, выжигая лимит). Параллельность тут намеренно не используется:
+ * она провоцирует пустые ответы и тратит квоту. Отмена/429-предохранитель — как
+ * везде. total в прогрессе = реально собранное (total_count недостижим и сбивает).
+ */
 export async function syncItems(
   db: Database.Database,
   http: SteamHttp,
@@ -108,76 +117,65 @@ export async function syncItems(
   let ok = 0;
   let fail = 0;
   let lastName: string | null = null;
-  let total = 0;
   let rateLimited = 0;
   let stoppedReason: string | undefined;
 
   const emit = () => {
-    onProgress?.({ processed, total, ok, fail, lastName });
+    // total = processed: реальная цель неизвестна (total_count недостижим).
+    onProgress?.({ processed, total: processed, ok, fail, lastName });
   };
 
-  const upsertItems = (items: MarketSearchItem[]) => {
-    for (const item of items) {
-      lastName = item.marketHashName;
-      try {
-        upsertItem(db, app, item.marketHashName, item.iconUrl);
-        ok++;
-      } catch {
-        fail++;
-      }
-      processed++;
-    }
-    emit();
-  };
+  const STOP_AFTER_EMPTY = 5; // столько пустых страниц подряд = конец выдачи
+  const maxPages = pages != null ? pages : Infinity;
 
-  const noteError = (err: unknown) => {
-    if (ctrl.signal.aborted) return; // отмена — не считаем ошибкой
-    fail++;
-    if (isRateLimit(err)) {
-      rateLimited++;
-      if (rateLimited >= RATE_LIMIT_TRIP) {
-        stoppedReason = RATE_LIMIT_MESSAGE;
-        ctrl.abort();
-      }
-    }
-    emit();
-  };
+  let pageIndex = 0;
+  let start = 0;
+  let consecutiveEmpty = 0;
 
-  // Первая страница: получаем total_count и первые предметы.
-  try {
-    const first = await fetchMarketPage(http, app, 0, ctrl.signal);
-    const available = first.totalCount ?? first.items.length;
-    // pages не задано -> берём весь каталог (available); иначе ограничиваем.
-    total = pages != null ? Math.min(available, pages * MARKET_PAGE_SIZE) : available;
-    upsertItems(first.items);
-    if (ctrl.signal.aborted || first.items.length === 0) {
-      return { ok, fail, processed, stoppedReason };
-    }
-
-    const offsets: number[] = [];
-    for (let s = MARKET_PAGE_SIZE; s < total; s += MARKET_PAGE_SIZE) {
-      offsets.push(s);
-    }
-
-    let next = 0;
-    const worker = async (): Promise<void> => {
-      while (!ctrl.signal.aborted) {
-        const i = next++;
-        if (i >= offsets.length) return;
-        try {
-          const page = await fetchMarketPage(http, app, offsets[i], ctrl.signal);
-          upsertItems(page.items);
-          rateLimited = 0; // успех сбрасывает счётчик 429
-        } catch (err) {
-          noteError(err);
+  while (!ctrl.signal.aborted && pageIndex < maxPages) {
+    let page;
+    try {
+      page = await fetchMarketPage(http, app, start, ctrl.signal);
+      rateLimited = 0; // успех сбрасывает счётчик 429
+    } catch (err) {
+      if (ctrl.signal.aborted) break;
+      fail++;
+      if (isRateLimit(err)) {
+        rateLimited++;
+        if (rateLimited >= RATE_LIMIT_TRIP) {
+          stoppedReason = RATE_LIMIT_MESSAGE;
+          break;
         }
       }
-    };
+      // прочая ошибка страницы — двигаемся дальше
+      start += MARKET_PAGE_SIZE;
+      pageIndex += 1;
+      emit();
+      continue;
+    }
 
-    const poolSize = Math.max(1, Math.min(http.concurrency, offsets.length || 1));
-    await Promise.all(Array.from({ length: poolSize }, () => worker()));
-  } catch (err) {
-    noteError(err);
+    if (page.items.length === 0) {
+      consecutiveEmpty += 1;
+      if (consecutiveEmpty >= STOP_AFTER_EMPTY) break; // выдача иссякла
+    } else {
+      consecutiveEmpty = 0;
+      for (const item of page.items) {
+        lastName = item.marketHashName;
+        try {
+          upsertItem(db, app, item.marketHashName, item.iconUrl);
+          ok++;
+        } catch {
+          fail++;
+        }
+        processed += 1;
+      }
+      emit();
+    }
+
+    start += MARKET_PAGE_SIZE;
+    pageIndex += 1;
+    // total_count как верхняя граница (если вдруг дошли).
+    if (page.totalCount !== null && start >= page.totalCount) break;
   }
 
   return { ok, fail, processed, stoppedReason };
@@ -283,6 +281,7 @@ export async function enrichHistory(
   let lastName: string | null = null;
   let rateLimited = 0;
   let stoppedReason: string | undefined;
+  let lastErrMsg: string | undefined;
 
   const emit = () => {
     onProgress?.({ processed, total, ok, fail, lastName });
@@ -310,6 +309,7 @@ export async function enrichHistory(
       } catch (err) {
         if (ctrl.signal.aborted) return; // отмена — не считаем
         fail++;
+        lastErrMsg = err instanceof Error ? err.message : String(err);
         if (isRateLimit(err)) {
           rateLimited++;
           if (rateLimited >= RATE_LIMIT_TRIP) {
@@ -325,6 +325,11 @@ export async function enrichHistory(
 
   const poolSize = Math.max(1, Math.min(http.concurrency, total || 1));
   await Promise.all(Array.from({ length: poolSize }, () => worker()));
+
+  // Если не получили НИ ОДНОЙ истории — показываем причину (чаще всего cookie).
+  if (!stoppedReason && ok === 0 && fail > 0 && lastErrMsg) {
+    stoppedReason = `История не собрана ни по одному предмету. Причина: ${lastErrMsg}`;
+  }
 
   return { ok, fail, processed, stoppedReason };
 }

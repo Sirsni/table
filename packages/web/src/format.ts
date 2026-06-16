@@ -40,14 +40,10 @@ export function iconSrc(iconUrl: string | null): string | null {
   return `${ICON_BASE}${iconUrl}/48fx48f`;
 }
 
-/** Короткая дата/время для столбца "Обновлено". */
+/** Короткая дата/время для столбца "Обновлено": "16.06 13:02". */
 export function shortDateTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
