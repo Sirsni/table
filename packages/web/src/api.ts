@@ -190,6 +190,25 @@ export async function startEnrich(
   return postJson<CollectorStatus>("/collector/enrich", body);
 }
 
+export interface CookieCheck {
+  hasCookie: boolean;
+  ok: boolean;
+  name?: string;
+  points?: number;
+  lastDate?: string | null;
+  lastPriceUsd?: number | null;
+  error?: string;
+}
+
+/** Проверка cookie: один запрос истории по реальному предмету. */
+export async function checkCookie(app: number): Promise<CookieCheck> {
+  const res = await fetch(`${BASE}/cookie/check?app=${app}`);
+  if (!res.ok) {
+    throw new Error(`GET /cookie/check: ${res.status}`);
+  }
+  return (await res.json()) as CookieCheck;
+}
+
 export async function stopCollector(): Promise<CollectorStatus> {
   const res = await fetch(`${BASE}/collector/stop`, { method: "POST" });
   if (!res.ok) {

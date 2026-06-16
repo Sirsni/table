@@ -8,6 +8,8 @@ import { ensureRates, fxStatus } from "./fx.js";
 import { queryItems } from "./items.js";
 import type { QueryItemsParams, SortDir, SortKey } from "./items.js";
 import { CollectorService } from "./collectorService.js";
+import { SteamHttp } from "@table/collector/steam/http";
+import { fetchPriceHistory } from "@table/collector/steam/pricehistory";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT) || 3000;
@@ -253,6 +255,48 @@ app.post<{ Body: EnrichBody }>("/api/collector/enrich", async (req, reply) => {
 });
 
 app.post("/api/collector/stop", async () => collector.stop());
+
+// ---- проверка cookie: один запрос истории по реальному предмету ----
+app.get<{ Querystring: { app?: string } }>(
+  "/api/cookie/check",
+  async (req) => {
+    const app = num(req.query.app) ?? 730;
+    const http = new SteamHttp({});
+    if (!http.hasCookie) {
+      return {
+        hasCookie: false,
+        ok: false,
+        error: "STEAM_COOKIE не задан — создай файл .env в корне проекта.",
+      };
+    }
+    // Берём реальное имя предмета из БД (если есть), иначе известный дефолт.
+    const row = db
+      .prepare(
+        `SELECT market_hash_name AS n FROM items WHERE app_id = ? ORDER BY id LIMIT 1`,
+      )
+      .get(app) as { n: string } | undefined;
+    const name = row?.n ?? "AK-47 | Redline (Field-Tested)";
+    try {
+      const h = await fetchPriceHistory(http, app, name, 1);
+      const last = h.points[h.points.length - 1];
+      return {
+        hasCookie: true,
+        ok: true,
+        name,
+        points: h.points.length,
+        lastDate: last ? last.date.toISOString() : null,
+        lastPriceUsd: last ? last.priceCents / 100 : null,
+      };
+    } catch (err) {
+      return {
+        hasCookie: true,
+        ok: false,
+        name,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  },
+);
 
 // ---- статика фронта (prod). В dev фронт на Vite — пропускаем. ----
 async function registerStatic(): Promise<void> {

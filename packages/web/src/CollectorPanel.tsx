@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { CollectorStatus } from "./api";
+import type { CollectorStatus, CookieCheck } from "./api";
 import {
+  checkCookie,
   getCollectorStatus,
   startEnrich,
   startSync,
@@ -38,6 +39,8 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
 
   const [status, setStatus] = useState<CollectorStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cookie, setCookie] = useState<CookieCheck | null>(null);
+  const [cookieBusy, setCookieBusy] = useState(false);
 
   // Предыдущее значение running — чтобы отловить переход true -> false.
   const prevRunningRef = useRef<boolean | null>(null);
@@ -130,6 +133,17 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
     prevRunningRef.current = result.running;
   }
 
+  async function handleCheckCookie(): Promise<void> {
+    setCookieBusy(true);
+    try {
+      setCookie(await checkCookie(app));
+    } catch (e) {
+      setCookie({ hasCookie: false, ok: false, error: String(e) });
+    } finally {
+      setCookieBusy(false);
+    }
+  }
+
   return (
     <div className="panel">
       <h2 className="panel__title">Сбор данных</h2>
@@ -220,9 +234,37 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
             >
               Стоп
             </button>
+            <button
+              type="button"
+              onClick={handleCheckCookie}
+              disabled={cookieBusy}
+            >
+              {cookieBusy ? "Проверка…" : "Проверить cookie"}
+            </button>
           </div>
         </div>
       </div>
+
+      {cookie && (
+        <div
+          className={
+            cookie.ok ? "collector__status" : "collector__error"
+          }
+        >
+          {cookie.ok ? (
+            <span>
+              Cookie работает ✓ — история доступна (предмет «{cookie.name}»,
+              точек: {cookie.points}
+              {cookie.lastPriceUsd != null
+                ? `, последняя $${cookie.lastPriceUsd.toFixed(2)}`
+                : ""}
+              ). Теперь жми «Обновить историю».
+            </span>
+          ) : (
+            <span>Cookie НЕ работает: {cookie.error}</span>
+          )}
+        </div>
+      )}
 
       {status && (
         <div className="collector__status">

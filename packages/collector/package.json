@@ -10,7 +10,8 @@
     "./runner": "./dist/runner.js",
     "./db": "./dist/db.js",
     "./repo": "./dist/repo.js",
-    "./steam/http": "./dist/steam/http.js"
+    "./steam/http": "./dist/steam/http.js",
+    "./steam/pricehistory": "./dist/steam/pricehistory.js"
   },
   "scripts": {
     "build": "tsc -p .",
