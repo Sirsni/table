@@ -70,6 +70,8 @@ export interface ApiError {
   error: string;
 }
 
+export type Service = "steam" | "steam_auto";
+
 export interface FetchItemsParams {
   app: number;
   search?: string;
@@ -83,18 +85,20 @@ export interface FetchItemsParams {
   sort?: SortKey;
   dir?: SortDir;
   limit?: number;
+  buyFrom?: Service;
+  sellTo?: Service;
 }
 
 export interface StartSyncBody {
   app: number;
-  pages: number;
+  pages?: number;
   concurrency?: number;
   intervalMs?: number;
 }
 
 export interface StartUpdateBody {
   app: number;
-  limit: number;
+  limit?: number;
   currency?: number;
   concurrency?: number;
   intervalMs?: number;
@@ -125,6 +129,8 @@ export async function fetchItems(params: FetchItemsParams): Promise<ItemDto[]> {
     sort: params.sort,
     dir: params.dir,
     limit: params.limit,
+    buyFrom: params.buyFrom,
+    sellTo: params.sellTo,
   });
   const res = await fetch(`${BASE}/items${qs}`);
   if (!res.ok) {

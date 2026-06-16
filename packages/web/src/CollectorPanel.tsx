@@ -32,8 +32,6 @@ interface CollectorPanelProps {
  */
 export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps) {
   const [app, setApp] = useState(defaultApp);
-  const [pages, setPages] = useState("5");
-  const [limit, setLimit] = useState("100");
   const [currency, setCurrency] = useState("1");
   const [concurrency, setConcurrency] = useState("5");
   const [intervalMs, setIntervalMs] = useState("200");
@@ -82,7 +80,6 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
     setError(null);
     const result = await startSync({
       app,
-      pages: num(pages, 5),
       concurrency: num(concurrency, 5),
       intervalMs: num(intervalMs, 200),
     });
@@ -98,7 +95,6 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
     setError(null);
     const result = await startUpdate({
       app,
-      limit: num(limit, 100),
       currency: num(currency, 1),
       concurrency: num(concurrency, 1),
       intervalMs: num(intervalMs, 1000),
@@ -115,7 +111,6 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
     setError(null);
     const result = await startEnrich({
       app,
-      limit: num(limit, 100),
       currency: num(currency, 1),
       concurrency: num(concurrency, 1),
       intervalMs: num(intervalMs, 1000),
@@ -152,30 +147,6 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
               </option>
             ))}
           </select>
-        </label>
-
-        <label className="field field--number">
-          Страниц (sync)
-          <input
-            type="number"
-            value={pages}
-            onChange={(e) => setPages(e.target.value)}
-            min="1"
-            step="1"
-            disabled={running}
-          />
-        </label>
-
-        <label className="field field--number">
-          Лимит (update)
-          <input
-            type="number"
-            value={limit}
-            onChange={(e) => setLimit(e.target.value)}
-            min="1"
-            step="1"
-            disabled={running}
-          />
         </label>
 
         <label className="field field--number">
@@ -287,6 +258,9 @@ export function CollectorPanel({ defaultApp, onJobChange }: CollectorPanelProps)
 
       {error && <div className="collector__error">{error}</div>}
 
+      <div className="collector__warning">
+        Синхронизация и обновление обрабатывают весь каталог.
+      </div>
       <div className="collector__warning">
         Высокая скорость (низкий интервал/высокая параллельность) повышает риск
         временного бана IP со стороны Steam.

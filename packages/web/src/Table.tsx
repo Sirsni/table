@@ -61,7 +61,7 @@ const columns: ColumnDef<ItemDto>[] = [
   },
   {
     id: "buyUsd",
-    header: "Автозапрос $",
+    header: "Покупка $",
     accessorKey: "buyUsd",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => (

@@ -303,3 +303,41 @@ tbody tr:hover {
   font-size: 0.85rem;
   color: var(--text-dim);
 }
+
+/* Выбор пары сервисов «Купить на / Продать на» */
+.service-pair {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.service-pair__arrow {
+  font-size: 1.2rem;
+  color: var(--text-dim);
+  padding-bottom: 2px;
+}
+
+.service-pair__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--accent);
+  padding-bottom: 4px;
+}
+
+/* Гарантируем, что заголовки таблицы не переносятся и колонки имеют мин. ширину */
+thead th {
+  min-width: 60px;
+}
+
+table {
+  min-width: max-content;
+}
+
+.col-num {
+  white-space: nowrap;
+}

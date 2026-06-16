@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { SortDir, SortKey } from "./api";
+import type { Service, SortDir, SortKey } from "./api";
 
 export interface FiltersValue {
   app: number;
@@ -12,6 +12,8 @@ export interface FiltersValue {
   minDipPct: string;
   sort: SortKey;
   dir: SortDir;
+  buyFrom: Service;
+  sellTo: Service;
 }
 
 export const DEFAULT_FILTERS: FiltersValue = {
@@ -25,6 +27,8 @@ export const DEFAULT_FILTERS: FiltersValue = {
   minDipPct: "",
   sort: "margin",
   dir: "desc",
+  buyFrom: "steam_auto",
+  sellTo: "steam",
 };
 
 const GAMES: Array<{ value: number; label: string }> = [
@@ -36,7 +40,7 @@ const GAMES: Array<{ value: number; label: string }> = [
 const SORT_KEYS: Array<{ value: SortKey; label: string }> = [
   { value: "margin", label: "Маржа %" },
   { value: "profit", label: "Прибыль $" },
-  { value: "buy", label: "Автозапрос $" },
+  { value: "buy", label: "Покупка $" },
   { value: "sell", label: "Продажа $" },
   { value: "volume", label: "Объём" },
   { value: "name", label: "Название" },

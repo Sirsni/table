@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { FetchItemsParams, ItemDto, Meta } from "./api";
+import type { FetchItemsParams, ItemDto, Meta, Service } from "./api";
 import { fetchItems, fetchMeta } from "./api";
 import { CollectorPanel } from "./CollectorPanel";
 import { DEFAULT_FILTERS, Filters } from "./Filters";
@@ -28,8 +28,15 @@ function toItemsParams(filters: FiltersValue): FetchItemsParams {
     minDipPct: parseNum(filters.minDipPct),
     sort: filters.sort,
     dir: filters.dir,
+    buyFrom: filters.buyFrom,
+    sellTo: filters.sellTo,
   };
 }
+
+const SERVICE_LABELS: Record<Service, string> = {
+  steam: "STEAM",
+  steam_auto: "STEAM(AUTO)",
+};
 
 /** Короткая дата/время для меты (последний сбор, обновление курсов). */
 function shortMetaTime(iso: string | null): string {
@@ -156,6 +163,43 @@ export function App() {
       )}
 
       <CollectorPanel defaultApp={app} onJobChange={handleJobChange} />
+
+      <div className="service-pair">
+        <label className="field">
+          Купить на
+          <select
+            value={filters.buyFrom}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                buyFrom: e.target.value as Service,
+              }))
+            }
+          >
+            <option value="steam">STEAM</option>
+            <option value="steam_auto">STEAM(AUTO)</option>
+          </select>
+        </label>
+        <span className="service-pair__arrow">→</span>
+        <label className="field">
+          Продать на
+          <select
+            value={filters.sellTo}
+            onChange={(e) =>
+              setFilters((prev) => ({
+                ...prev,
+                sellTo: e.target.value as Service,
+              }))
+            }
+          >
+            <option value="steam">STEAM</option>
+            <option value="steam_auto">STEAM(AUTO)</option>
+          </select>
+        </label>
+        <span className="service-pair__label">
+          {SERVICE_LABELS[filters.buyFrom]} → {SERVICE_LABELS[filters.sellTo]}
+        </span>
+      </div>
 
       <Filters value={filters} onChange={setFilters} />
 
