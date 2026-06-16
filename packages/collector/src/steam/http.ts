@@ -78,6 +78,14 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 const RATE_LIMIT_RETRIES = 1;
 const RATE_LIMIT_PAUSE_MS = 3000;
 
+// Таймаут одного запроса. Без него undici-fetch может зависнуть навсегда на
+// оборванном соединении (нестабильный тоннель/VPN) — и пул воркеров «замерзает».
+// По таймауту запрос прерывается и ретраится как сетевая ошибка.
+const REQUEST_TIMEOUT_MS = (() => {
+  const v = Number(process.env.STEAM_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : 20000;
+})();
+
 /** Экспоненциальная пауза 2s,4s,8s,16s + джиттер до 1s. */
 function backoffMs(attempt: number): number {
   const base = 2000 * 2 ** attempt; // attempt 0 -> 2000
@@ -188,6 +196,12 @@ export class SteamHttp {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       if (signal?.aborted) throw new SteamAbortError();
       try {
+        // Таймаут на запрос + внешняя отмена («Стоп»/предохранитель) — единым
+        // сигналом. По таймауту fetch прервётся и пойдёт в ретрай (см. catch).
+        const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+        const reqSignal = signal
+          ? AbortSignal.any([signal, timeoutSignal])
+          : timeoutSignal;
         const res = await fetch(url, {
           headers: {
             "User-Agent": USER_AGENT,
@@ -196,7 +210,7 @@ export class SteamHttp {
             // Cookie добавляем только если задан — иначе запрос как раньше.
             ...(this.cookie ? { Cookie: this.cookie } : {}),
           },
-          signal,
+          signal: reqSignal,
           // undici-специфичное поле, в типах RequestInit его нет
           ...(this.dispatcher ? { dispatcher: this.dispatcher } : {}),
         } as RequestInit);
@@ -257,11 +271,13 @@ export class SteamHttp {
         ) {
           throw err;
         }
-        // fetch при abort бросает AbortError (DOMException) — трактуем как отмену.
-        if (signal?.aborted || (err instanceof Error && err.name === "AbortError")) {
+        // ТОЛЬКО внешняя отмена («Стоп»/предохранитель) терминальна. Таймаут
+        // запроса (timeoutSignal) тоже бросает AbortError, но это НЕ отмена —
+        // его ретраим как сетевую ошибку, иначе зависший запрос убил бы воркер.
+        if (signal?.aborted) {
           throw new SteamAbortError();
         }
-        // Сетевая ошибка (fetch бросил) — ретраим.
+        // Сетевая ошибка или таймаут запроса — ретраим.
         lastErr = err;
         const retriable = attempt < this.maxRetries;
         const pause = backoffMs(attempt);

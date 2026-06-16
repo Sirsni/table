@@ -60,9 +60,18 @@ interface ItemsQuery {
   minSales7d?: string;
   minSales30d?: string;
   minDipPct?: string;
+  buyFrom?: string;
+  sellTo?: string;
   sort?: string;
   dir?: string;
   limit?: string;
+}
+
+const SERVICES = new Set(["steam", "steam_auto"]);
+function svc(v: unknown): "steam" | "steam_auto" | undefined {
+  return typeof v === "string" && SERVICES.has(v)
+    ? (v as "steam" | "steam_auto")
+    : undefined;
 }
 
 const SORT_KEYS = new Set([
@@ -96,6 +105,8 @@ app.get<{ Querystring: ItemsQuery }>("/api/items", async (req) => {
     minSales7d: num(q.minSales7d),
     minSales30d: num(q.minSales30d),
     minDipPct: num(q.minDipPct),
+    buyFrom: svc(q.buyFrom),
+    sellTo: svc(q.sellTo),
     sort:
       sortRaw && SORT_KEYS.has(sortRaw) ? (sortRaw as SortKey) : undefined,
     dir: q.dir === "asc" ? ("asc" as SortDir) : q.dir === "desc" ? "desc" : undefined,
@@ -177,11 +188,10 @@ interface SyncBody {
 app.post<{ Body: SyncBody }>("/api/collector/sync", async (req, reply) => {
   const body = req.body ?? {};
   const app = num(body.app) ?? 730;
-  const pages = num(body.pages) ?? 5;
   try {
     const status = collector.startSync({
       app,
-      pages,
+      pages: num(body.pages), // не задано -> весь каталог
       concurrency: num(body.concurrency),
       intervalMs: num(body.intervalMs),
     });
@@ -202,11 +212,10 @@ interface UpdateBody {
 app.post<{ Body: UpdateBody }>("/api/collector/update", async (req, reply) => {
   const body = req.body ?? {};
   const app = num(body.app) ?? 730;
-  const limit = num(body.limit) ?? 100;
   try {
     const status = collector.startUpdate({
       app,
-      limit,
+      limit: num(body.limit), // не задано -> все предметы
       currency: num(body.currency),
       concurrency: num(body.concurrency),
       intervalMs: num(body.intervalMs),
@@ -228,11 +237,10 @@ interface EnrichBody {
 app.post<{ Body: EnrichBody }>("/api/collector/enrich", async (req, reply) => {
   const body = req.body ?? {};
   const app = num(body.app) ?? 730;
-  const limit = num(body.limit) ?? 100;
   try {
     const status = collector.startEnrich({
       app,
-      limit,
+      limit: num(body.limit), // не задано -> все предметы
       currency: num(body.currency),
       concurrency: num(body.concurrency),
       intervalMs: num(body.intervalMs),

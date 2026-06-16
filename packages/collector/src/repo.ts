@@ -116,11 +116,11 @@ export function listItemsNeedingNameId(
 export function listItemsForPriceUpdate(
   db: Database.Database,
   appId: number,
-  limit: number,
+  limit?: number,
 ): ItemRow[] {
-  return db
-    .prepare(
-      `SELECT i.id, i.app_id, i.market_hash_name, i.item_nameid, i.icon_url, i.updated_at
+  // limit не задан -> обновляем ВСЕ предметы приложения.
+  const sql =
+    `SELECT i.id, i.app_id, i.market_hash_name, i.item_nameid, i.icon_url, i.updated_at
        FROM items i
        LEFT JOIN (
          SELECT item_id, MAX(fetched_at) AS last_fetched
@@ -128,10 +128,10 @@ export function listItemsForPriceUpdate(
          GROUP BY item_id
        ) s ON s.item_id = i.id
        WHERE i.app_id = ?
-       ORDER BY (s.last_fetched IS NULL) DESC, s.last_fetched ASC, i.id ASC
-       LIMIT ?`,
-    )
-    .all(appId, limit) as ItemRow[];
+       ORDER BY (s.last_fetched IS NULL) DESC, s.last_fetched ASC, i.id ASC` +
+    (limit != null ? ` LIMIT ?` : ``);
+  const args = limit != null ? [appId, limit] : [appId];
+  return db.prepare(sql).all(...args) as ItemRow[];
 }
 
 /**
@@ -142,18 +142,18 @@ export function listItemsForPriceUpdate(
 export function listItemsForHistoryUpdate(
   db: Database.Database,
   appId: number,
-  limit: number,
+  limit?: number,
 ): ItemRow[] {
-  return db
-    .prepare(
-      `SELECT i.id, i.app_id, i.market_hash_name, i.item_nameid, i.icon_url, i.updated_at
+  // limit не задан -> обновляем историю по ВСЕМ предметам приложения.
+  const sql =
+    `SELECT i.id, i.app_id, i.market_hash_name, i.item_nameid, i.icon_url, i.updated_at
        FROM items i
        LEFT JOIN item_stats st ON st.item_id = i.id
        WHERE i.app_id = ?
-       ORDER BY (st.item_id IS NULL) DESC, st.fetched_at ASC, i.id ASC
-       LIMIT ?`,
-    )
-    .all(appId, limit) as ItemRow[];
+       ORDER BY (st.item_id IS NULL) DESC, st.fetched_at ASC, i.id ASC` +
+    (limit != null ? ` LIMIT ?` : ``);
+  const args = limit != null ? [appId, limit] : [appId];
+  return db.prepare(sql).all(...args) as ItemRow[];
 }
 
 export interface ItemStatsInput {

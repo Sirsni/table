@@ -1,6 +1,13 @@
 import type Database from "better-sqlite3";
-import { sellerReceives, profit, marginPct } from "@table/shared";
+import { sellerReceives } from "@table/shared";
 import { toUsdCents } from "./fx.js";
+
+/**
+ * Источник цены: STEAM = обычный листинг (нижний лот), STEAM(AUTO) = верхний
+ * автозапрос (buy order). Таблица считает прибыль «купить на buyFrom → продать
+ * на sellTo». По умолчанию steam_auto → steam (купить автозапросом, продать листингом).
+ */
+export type Service = "steam" | "steam_auto";
 
 /**
  * Чтение таблицы предметов для API. Цены в БД — в минимальных единицах валюты
@@ -31,6 +38,10 @@ export interface QueryItemsParams {
   minSales7d?: number;
   minSales30d?: number;
   minDipPct?: number;
+  /** Где покупаем (по умолчанию steam_auto). */
+  buyFrom?: Service;
+  /** Куда продаём (по умолчанию steam). */
+  sellTo?: Service;
   sort?: SortKey;
   dir?: SortDir;
   limit?: number;
@@ -155,17 +166,29 @@ export function queryItems(
     for (const s of statRows) statsById.set(s.item_id, s);
   }
 
+  const buyFrom: Service = params.buyFrom ?? "steam_auto";
+  const sellTo: Service = params.sellTo ?? "steam";
+
   // Преобразуем в DTO с конвертацией в USD.
   let dtos: ItemDto[] = rows.map((r) => {
     // Обе цены гарантированы WHERE (IS NOT NULL).
-    const buy = r.buy_order as number;
-    const sell = r.sell_price as number;
+    const highestBuy = r.buy_order as number; // STEAM(AUTO): верхний автозапрос
+    const lowestSell = r.sell_price as number; // STEAM: нижний лот
 
-    const buyUsdCents = toUsdCents(buy, r.currency);
-    const sellUsdCents = toUsdCents(sell, r.currency);
-    const receiveUsdCents = toUsdCents(sellerReceives(sell), r.currency);
-    const profitUsdCents = toUsdCents(profit(buy, sell), r.currency);
-    const margin = marginPct(buy, sell); // валютнонезависимо
+    // Цена покупки и цена, по которой продаём, зависят от выбранной пары сервисов.
+    const buyCost = buyFrom === "steam" ? lowestSell : highestBuy;
+    const sellGross = sellTo === "steam" ? lowestSell : highestBuy;
+    // Комиссия Steam берётся при ЛЮБОЙ продаже на Steam (и листингом, и автозапросу).
+    const sellNet = sellerReceives(sellGross);
+    const profitRaw = sellNet - buyCost;
+    const margin = buyCost > 0 ? (profitRaw / buyCost) * 100 : null; // валютнонезависимо
+
+    const buyUsdCents = toUsdCents(buyCost, r.currency);
+    const sellUsdCents = toUsdCents(sellGross, r.currency);
+    const receiveUsdCents = toUsdCents(sellNet, r.currency);
+    const profitUsdCents = toUsdCents(profitRaw, r.currency);
+    // Текущий нижний лот в USD — для скидки к средней (независимо от пары).
+    const lowestSellUsdCents = toUsdCents(lowestSell, r.currency);
 
     const st = statsById.get(r.id);
     // avg/last_price хранятся в валюте st.currency (валюта запроса pricehistory),
@@ -181,9 +204,13 @@ export function queryItems(
     // приводим к одной базе (USD-центы), чтобы валюты снапшота и истории не
     // искажали сравнение. >0 = текущая продажа дешевле средней (скидка).
     let dipPct: number | null = null;
-    if (avg30UsdCents !== null && avg30UsdCents > 0 && sellUsdCents !== null) {
+    if (
+      avg30UsdCents !== null &&
+      avg30UsdCents > 0 &&
+      lowestSellUsdCents !== null
+    ) {
       dipPct = round2(
-        ((avg30UsdCents - sellUsdCents) / avg30UsdCents) * 100,
+        ((avg30UsdCents - lowestSellUsdCents) / avg30UsdCents) * 100,
       );
     }
 

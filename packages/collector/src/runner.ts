@@ -48,14 +48,16 @@ export interface CollectSummary {
 
 export interface SyncItemsOptions {
   app: number;
-  pages: number;
+  /** Не задано -> синхронизируем ВЕСЬ каталог (все страницы по total_count). */
+  pages?: number;
   onProgress?: (p: CollectProgress) => void;
   signal?: AbortSignal;
 }
 
 export interface UpdatePricesOptions {
   app: number;
-  limit: number;
+  /** Не задано -> обновляем цены по ВСЕМ предметам. */
+  limit?: number;
   currency?: number;
   onProgress?: (p: CollectProgress) => void;
   signal?: AbortSignal;
@@ -63,7 +65,8 @@ export interface UpdatePricesOptions {
 
 export interface EnrichHistoryOptions {
   app: number;
-  limit: number;
+  /** Не задано -> обновляем историю по ВСЕМ предметам. */
+  limit?: number;
   currency?: number;
   onProgress?: (p: CollectProgress) => void;
   signal?: AbortSignal;
@@ -143,10 +146,9 @@ export async function syncItems(
   // Первая страница: получаем total_count и первые предметы.
   try {
     const first = await fetchMarketPage(http, app, 0, ctrl.signal);
-    total = Math.min(
-      first.totalCount ?? first.items.length,
-      pages * MARKET_PAGE_SIZE,
-    );
+    const available = first.totalCount ?? first.items.length;
+    // pages не задано -> берём весь каталог (available); иначе ограничиваем.
+    total = pages != null ? Math.min(available, pages * MARKET_PAGE_SIZE) : available;
     upsertItems(first.items);
     if (ctrl.signal.aborted || first.items.length === 0) {
       return { ok, fail, processed, stoppedReason };

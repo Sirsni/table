@@ -31,14 +31,16 @@ export interface CollectorStatus {
 
 export interface StartSyncParams {
   app: number;
-  pages: number;
+  /** Не задано -> весь каталог. */
+  pages?: number;
   concurrency?: number;
   intervalMs?: number;
 }
 
 export interface StartUpdateParams {
   app: number;
-  limit: number;
+  /** Не задано -> все предметы. */
+  limit?: number;
   currency?: number;
   concurrency?: number;
   intervalMs?: number;
@@ -46,7 +48,8 @@ export interface StartUpdateParams {
 
 export interface StartEnrichParams {
   app: number;
-  limit: number;
+  /** Не задано -> все предметы. */
+  limit?: number;
   currency?: number;
   concurrency?: number;
   intervalMs?: number;
@@ -124,6 +127,12 @@ export class CollectorService {
       // Причина авто-остановки (например, предохранитель 429).
       this.lastError = note;
     }
+    // Диагностический лог: видно, ЧЕМ закончилась задача (а не молчаливый стоп).
+    const why = this.lastError ? `остановлено: ${this.lastError}` : "завершено";
+    // eslint-disable-next-line no-console
+    console.log(
+      `[collector] ${this.kind}: ${why} — обработано ${this.processed}/${this.total}, ok=${this.ok}, fail=${this.fail}`,
+    );
   }
 
   /** Собрать SteamHttp, прокинув только заданные опции. */

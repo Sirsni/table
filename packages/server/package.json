@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/server.ts",
+    "dev": "node --env-file-if-exists=../../.env --import tsx src/server.ts",
     "build": "tsc -p .",
     "typecheck": "tsc -p . --noEmit",
     "start": "node --env-file-if-exists=../../.env dist/server.js"
