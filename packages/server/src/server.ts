@@ -62,6 +62,8 @@ interface ItemsQuery {
   minSales7d?: string;
   minSales30d?: string;
   minDipPct?: string;
+  minRealMargin?: string;
+  hideBoost?: string;
   buyFrom?: string;
   sellTo?: string;
   sort?: string;
@@ -86,6 +88,7 @@ const SORT_KEYS = new Set([
   "sales30d",
   "sales7d",
   "dip",
+  "realMargin",
 ]);
 
 // ---- /api/items ----
@@ -107,6 +110,8 @@ app.get<{ Querystring: ItemsQuery }>("/api/items", async (req) => {
     minSales7d: num(q.minSales7d),
     minSales30d: num(q.minSales30d),
     minDipPct: num(q.minDipPct),
+    minRealMargin: num(q.minRealMargin),
+    hideBoost: q.hideBoost === "1" || q.hideBoost === "true",
     buyFrom: svc(q.buyFrom),
     sellTo: svc(q.sellTo),
     sort:

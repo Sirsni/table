@@ -296,6 +296,20 @@ tbody tr:hover {
   color: var(--text-dim);
 }
 
+.badge-boost {
+  display: inline-block;
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #f0a020;
+  background: rgba(240, 160, 32, 0.15);
+  border: 1px solid rgba(240, 160, 32, 0.35);
+}
+
 .checkbox-field {
   display: flex;
   align-items: center;

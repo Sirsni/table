@@ -26,6 +26,8 @@ function toItemsParams(filters: FiltersValue): FetchItemsParams {
     minVolume: parseNum(filters.minVolume),
     minSales30d: parseNum(filters.minSales30d),
     minDipPct: parseNum(filters.minDipPct),
+    minRealMargin: parseNum(filters.minRealMargin),
+    hideBoost: filters.hideBoost ? true : undefined,
     sort: filters.sort,
     dir: filters.dir,
     buyFrom: filters.buyFrom,

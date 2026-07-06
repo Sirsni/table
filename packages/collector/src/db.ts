@@ -41,8 +41,24 @@ CREATE TABLE IF NOT EXISTS item_stats (
   last_price INTEGER,
   last_date TEXT,
   currency INTEGER,
+  median_7d INTEGER,
+  median_30d INTEGER,
+  p25_30d INTEGER,
+  volatility_pct REAL,
+  baseline_price INTEGER,
+  recent_price INTEGER,
+  boost_score REAL,
   fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS price_points (
+  item_id INTEGER NOT NULL REFERENCES items(id),
+  ts INTEGER NOT NULL,            -- unix-секунды точки
+  price INTEGER NOT NULL,         -- в минимальных единицах валюты currency
+  qty INTEGER NOT NULL,
+  currency INTEGER,
+  PRIMARY KEY (item_id, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_points_item ON price_points(item_id);
 `;
 
 // View пересоздаём всегда: тело могло измениться между версиями (добавили currency).
@@ -70,6 +86,32 @@ function ensureCurrencyColumn(db: Database.Database): void {
   }
 }
 
+/**
+ * Идемпотентно добавляет новые колонки метрик в item_stats на существующих БД
+ * (CREATE TABLE IF NOT EXISTS не меняет уже созданную таблицу). Новые БД получают
+ * их сразу из CREATE TABLE — тогда эта функция просто ничего не делает.
+ */
+function ensureItemStatsColumns(db: Database.Database): void {
+  const cols = db
+    .prepare(`PRAGMA table_info(item_stats)`)
+    .all() as Array<{ name: string }>;
+  const have = new Set(cols.map((c) => c.name));
+  const wanted: Array<[string, string]> = [
+    ["median_7d", "INTEGER"],
+    ["median_30d", "INTEGER"],
+    ["p25_30d", "INTEGER"],
+    ["volatility_pct", "REAL"],
+    ["baseline_price", "INTEGER"],
+    ["recent_price", "INTEGER"],
+    ["boost_score", "REAL"],
+  ];
+  for (const [name, type] of wanted) {
+    if (!have.has(name)) {
+      db.exec(`ALTER TABLE item_stats ADD COLUMN ${name} ${type};`);
+    }
+  }
+}
+
 export function openDb(path?: string): Database.Database {
   const dbPath = path ?? process.env.DB_PATH ?? DEFAULT_DB_PATH;
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -80,6 +122,8 @@ export function openDb(path?: string): Database.Database {
   // Миграция существующих БД: добавить currency до пересоздания view,
   // иначе view сошлётся на несуществующую колонку.
   ensureCurrencyColumn(db);
+  // Новые метрики item_stats (median/percentile/volatility/boost) на старых БД.
+  ensureItemStatsColumns(db);
   db.exec(VIEW_SQL);
 
   return db;

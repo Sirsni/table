@@ -11,6 +11,7 @@ import {
   listItemsForPriceUpdate,
   listItemsForHistoryUpdate,
   upsertItemStats,
+  replaceItemPoints,
 } from "./repo.js";
 
 /**
@@ -303,6 +304,16 @@ export async function enrichHistory(
           ctrl.signal,
         );
         const stats = computeStats(history.points);
+        replaceItemPoints(
+          db,
+          it.id,
+          history.points.map((p) => ({
+            ts: Math.floor(p.date.getTime() / 1000),
+            price: p.priceCents,
+            qty: p.qty,
+          })),
+          currency,
+        );
         upsertItemStats(db, it.id, { ...stats, currency });
         ok++;
         rateLimited = 0; // успех сбрасывает счётчик 429

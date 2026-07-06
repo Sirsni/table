@@ -25,7 +25,8 @@ export type SortKey =
   | "name"
   | "sales30d"
   | "sales7d"
-  | "dip";
+  | "dip"
+  | "realMargin";
 export type SortDir = "asc" | "desc";
 
 export interface QueryItemsParams {
@@ -38,6 +39,10 @@ export interface QueryItemsParams {
   minSales7d?: number;
   minSales30d?: number;
   minDipPct?: number;
+  /** Минимальная реальная маржа (по медиане истории продаж), %. */
+  minRealMargin?: number;
+  /** Скрыть предметы с признаком буста (boostSuspect === true). */
+  hideBoost?: boolean;
   /** Где покупаем (по умолчанию steam_auto). */
   buyFrom?: Service;
   /** Куда продаём (по умолчанию steam). */
@@ -66,10 +71,28 @@ export interface ItemDto {
   sales30d: number | null;
   /** VWAP за 30 дней в USD либо null. */
   avg30dUsd: number | null;
+  /** Взвешенная медиана цены за 30 дней в USD либо null. */
+  median30dUsd: number | null;
   /** Цена последней сделки истории в USD либо null. */
   lastPriceUsd: number | null;
   /** Скидка текущей продажи относительно VWAP-30д, % (>0 = ниже средней). */
   dipPct: number | null;
+  /**
+   * Реальная прибыль в USD: продажа по медиане истории (median7d ?? median30d)
+   * за вычетом комиссии, минус цена покупки. null, если нет медианы/стакана.
+   * Для sellTo=steam_auto равна номинальной profitUsd (продажа в бид гарантирована).
+   */
+  realProfitUsd: number | null;
+  /** Реальная маржа, % (по realProfitUsd относительно цены покупки). null аналогично. */
+  realMarginPct: number | null;
+  /** boostScore из истории (recent/baseline медиана), round2, либо null. */
+  boostScore: number | null;
+  /**
+   * Подозрение на буст/накрутку цены. null, если истории нет.
+   * true, если boostScore >= 1.5 ИЛИ текущий нижний лот >= 1.5x медианы-30д
+   * при достаточном объёме продаж (>=5 за 30д).
+   */
+  boostSuspect: boolean | null;
 }
 
 /** Строка items_latest, нужные столбцы. */
@@ -95,6 +118,13 @@ interface StatsRow {
   last_price: number | null;
   last_date: string | null;
   currency: number | null;
+  median_7d: number | null;
+  median_30d: number | null;
+  p25_30d: number | null;
+  volatility_pct: number | null;
+  baseline_price: number | null;
+  recent_price: number | null;
+  boost_score: number | null;
 }
 
 const CANDIDATE_CAP = 20000;
@@ -109,6 +139,7 @@ const VALID_SORTS = new Set<SortKey>([
   "sales30d",
   "sales7d",
   "dip",
+  "realMargin",
 ]);
 
 function round2(n: number | null): number | null {
@@ -158,7 +189,9 @@ export function queryItems(
     const statRows = db
       .prepare(
         `SELECT item_id, sales_7d, sales_30d, avg_7d, avg_30d,
-                last_price, last_date, currency
+                last_price, last_date, currency,
+                median_7d, median_30d, p25_30d, volatility_pct,
+                baseline_price, recent_price, boost_score
          FROM item_stats
          WHERE item_id IN (${placeholders})`,
       )
@@ -191,13 +224,18 @@ export function queryItems(
     const lowestSellUsdCents = toUsdCents(lowestSell, r.currency);
 
     const st = statsById.get(r.id);
-    // avg/last_price хранятся в валюте st.currency (валюта запроса pricehistory),
-    // приводим к USD-центам отдельно — она может отличаться от валюты снапшота.
+    // avg/last_price/median хранятся в валюте st.currency (валюта запроса
+    // pricehistory), приводим к USD-центам отдельно — она может отличаться от
+    // валюты снапшота.
     const avg30UsdCents =
       st && st.avg_30d !== null ? toUsdCents(st.avg_30d, st.currency) : null;
     const lastPriceUsdCents =
       st && st.last_price !== null
         ? toUsdCents(st.last_price, st.currency)
+        : null;
+    const median30UsdCents =
+      st && st.median_30d !== null
+        ? toUsdCents(st.median_30d, st.currency)
         : null;
 
     // dipPct: насколько текущая продажа ниже средней (VWAP-30д). Обе цены
@@ -212,6 +250,52 @@ export function queryItems(
       dipPct = round2(
         ((avg30UsdCents - lowestSellUsdCents) / avg30UsdCents) * 100,
       );
+    }
+
+    // Реальная маржа: считаем выручку не по номинальному стакану, а по медиане
+    // фактически прошедших сделок (median7d приоритетнее — свежее; иначе median30d).
+    // Для sellTo=steam_auto продажа идёт «в бид» и исполняется гарантированно —
+    // реальная цена совпадает с номинальной, поэтому real == nominal.
+    let realProfitUsd: number | null;
+    let realMarginPct: number | null;
+    if (sellTo === "steam_auto") {
+      realProfitUsd = centsToUsd(profitUsdCents);
+      realMarginPct = round2(margin);
+    } else {
+      const realSellGross =
+        st !== undefined ? (st.median_7d ?? st.median_30d) : null;
+      const realReceiveUsdCents =
+        realSellGross !== null && st !== undefined
+          ? toUsdCents(sellerReceives(realSellGross), st.currency)
+          : null;
+      if (realReceiveUsdCents !== null && buyUsdCents !== null) {
+        const realProfitUsdCents = realReceiveUsdCents - buyUsdCents;
+        realProfitUsd = centsToUsd(realProfitUsdCents);
+        realMarginPct =
+          buyUsdCents > 0
+            ? round2((realProfitUsdCents / buyUsdCents) * 100)
+            : null;
+      } else {
+        realProfitUsd = null;
+        realMarginPct = null;
+      }
+    }
+
+    // Признак буста: либо взлёт свежей медианы над нормой (boost_score),
+    // либо текущий нижний лот сильно выше медианы-30д при заметном объёме.
+    const boostScore = st !== undefined ? round2(st.boost_score) : null;
+    let boostSuspect: boolean | null;
+    if (st === undefined) {
+      boostSuspect = null;
+    } else {
+      const byScore = st.boost_score !== null && st.boost_score >= 1.5;
+      const byRatio =
+        median30UsdCents !== null &&
+        median30UsdCents > 0 &&
+        lowestSellUsdCents !== null &&
+        lowestSellUsdCents / median30UsdCents >= 1.5 &&
+        (st.sales_30d ?? 0) >= 5;
+      boostSuspect = byScore || byRatio;
     }
 
     return {
@@ -232,8 +316,13 @@ export function queryItems(
       sales7d: st ? st.sales_7d : null,
       sales30d: st ? st.sales_30d : null,
       avg30dUsd: centsToUsd(avg30UsdCents),
+      median30dUsd: centsToUsd(median30UsdCents),
       lastPriceUsd: centsToUsd(lastPriceUsdCents),
       dipPct,
+      realProfitUsd,
+      realMarginPct,
+      boostScore,
+      boostSuspect,
     };
   });
 
@@ -266,6 +355,17 @@ export function queryItems(
     const min = params.minDipPct;
     dtos = dtos.filter((d) => d.dipPct !== null && d.dipPct >= min);
   }
+  if (
+    params.minRealMargin !== undefined &&
+    Number.isFinite(params.minRealMargin)
+  ) {
+    const min = params.minRealMargin;
+    dtos = dtos.filter((d) => d.realMarginPct !== null && d.realMarginPct >= min);
+  }
+  if (params.hideBoost === true) {
+    // Отбрасываем только явно подозрительные; null/false (нет данных или норма) — оставляем.
+    dtos = dtos.filter((d) => d.boostSuspect !== true);
+  }
 
   // Сортировка.
   const sort: SortKey = params.sort && VALID_SORTS.has(params.sort)
@@ -292,6 +392,8 @@ export function queryItems(
         return d.sales7d;
       case "dip":
         return d.dipPct;
+      case "realMargin":
+        return d.realMarginPct;
       default:
         return null;
     }

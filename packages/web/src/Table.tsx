@@ -55,6 +55,17 @@ const columns: ColumnDef<ItemDto>[] = [
           >
             {item.name}
           </a>
+          {item.boostSuspect === true && (
+            <span
+              className="badge-boost"
+              title={
+                "Недавние цены аномально выше месячной нормы" +
+                (item.boostScore ? `, x${item.boostScore}` : "")
+              }
+            >
+              ⚠ буст
+            </span>
+          )}
         </div>
       );
     },
@@ -146,6 +157,39 @@ const columns: ColumnDef<ItemDto>[] = [
     cell: ({ getValue }) => (
       <span className="col-num">{usd(getValue<number | null>())}</span>
     ),
+  },
+  {
+    id: "median30dUsd",
+    header: "Медиана $",
+    accessorKey: "median30dUsd",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => (
+      <span className="col-num">{usd(getValue<number | null>())}</span>
+    ),
+  },
+  {
+    id: "realProfitUsd",
+    header: "Реал. прибыль $",
+    accessorKey: "realProfitUsd",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return (
+        <span className={`col-num ${signedClass(v) ?? ""}`}>{usd(v)}</span>
+      );
+    },
+  },
+  {
+    id: "realMarginPct",
+    header: "Реал. маржа %",
+    accessorKey: "realMarginPct",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return (
+        <span className={`col-num ${signedClass(v) ?? ""}`}>{pct(v)}</span>
+      );
+    },
   },
   {
     id: "dipPct",

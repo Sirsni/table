@@ -23,6 +23,11 @@ export interface ItemDto {
   avg30dUsd: number | null;
   lastPriceUsd: number | null;
   dipPct: number | null;
+  median30dUsd: number | null;
+  realProfitUsd: number | null;
+  realMarginPct: number | null;
+  boostScore: number | null;
+  boostSuspect: boolean | null;
 }
 
 export interface FxStatus {
@@ -48,7 +53,8 @@ export type SortKey =
   | "name"
   | "sales30d"
   | "sales7d"
-  | "dip";
+  | "dip"
+  | "realMargin";
 export type SortDir = "asc" | "desc";
 
 export type CollectorKind = "sync" | "update" | "enrich" | null;
@@ -82,6 +88,8 @@ export interface FetchItemsParams {
   minSales7d?: number;
   minSales30d?: number;
   minDipPct?: number;
+  minRealMargin?: number;
+  hideBoost?: boolean;
   sort?: SortKey;
   dir?: SortDir;
   limit?: number;
@@ -126,6 +134,8 @@ export async function fetchItems(params: FetchItemsParams): Promise<ItemDto[]> {
     minSales7d: params.minSales7d,
     minSales30d: params.minSales30d,
     minDipPct: params.minDipPct,
+    minRealMargin: params.minRealMargin,
+    hideBoost: params.hideBoost ? "1" : undefined,
     sort: params.sort,
     dir: params.dir,
     limit: params.limit,

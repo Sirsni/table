@@ -10,6 +10,8 @@ export interface FiltersValue {
   minVolume: string;
   minSales30d: string;
   minDipPct: string;
+  minRealMargin: string;
+  hideBoost: boolean;
   sort: SortKey;
   dir: SortDir;
   buyFrom: Service;
@@ -25,6 +27,8 @@ export const DEFAULT_FILTERS: FiltersValue = {
   minVolume: "",
   minSales30d: "",
   minDipPct: "",
+  minRealMargin: "",
+  hideBoost: false,
   sort: "margin",
   dir: "desc",
   buyFrom: "steam_auto",
@@ -46,6 +50,7 @@ const SORT_KEYS: Array<{ value: SortKey; label: string }> = [
   { value: "name", label: "Название" },
   { value: "sales30d", label: "Продаж/мес" },
   { value: "dip", label: "Скидка %" },
+  { value: "realMargin", label: "Реал. маржа %" },
 ];
 
 const DEBOUNCE_MS = 400;
@@ -84,6 +89,7 @@ export function Filters({ value, onChange }: FiltersProps) {
     local.minVolume,
     local.minSales30d,
     local.minDipPct,
+    local.minRealMargin,
   ]);
 
   function setLocalField<K extends keyof FiltersValue>(
@@ -193,6 +199,25 @@ export function Filters({ value, onChange }: FiltersProps) {
             onChange={(e) => setLocalField("minDipPct", e.target.value)}
             step="0.1"
           />
+        </label>
+
+        <label className="field field--number">
+          Мин. реал. маржа %
+          <input
+            type="number"
+            value={local.minRealMargin}
+            onChange={(e) => setLocalField("minRealMargin", e.target.value)}
+            step="0.1"
+          />
+        </label>
+
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={local.hideBoost}
+            onChange={(e) => setImmediate("hideBoost", e.target.checked)}
+          />
+          Скрыть возможный буст
         </label>
 
         <div className="field field--sort">

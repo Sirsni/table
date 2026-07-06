@@ -164,6 +164,13 @@ export interface ItemStatsInput {
   lastPrice: number | null;
   lastDate: string | null;
   currency: number;
+  median7d: number | null;
+  median30d: number | null;
+  p25_30d: number | null;
+  volatilityPct: number | null;
+  baselinePrice: number | null;
+  recentPrice: number | null;
+  boostScore: number | null;
 }
 
 /**
@@ -177,8 +184,10 @@ export function upsertItemStats(
 ): void {
   db.prepare(
     `INSERT INTO item_stats
-       (item_id, sales_7d, sales_30d, avg_7d, avg_30d, last_price, last_date, currency, fetched_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       (item_id, sales_7d, sales_30d, avg_7d, avg_30d, last_price, last_date, currency,
+        median_7d, median_30d, p25_30d, volatility_pct, baseline_price, recent_price, boost_score,
+        fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(item_id) DO UPDATE SET
        sales_7d = excluded.sales_7d,
        sales_30d = excluded.sales_30d,
@@ -187,6 +196,13 @@ export function upsertItemStats(
        last_price = excluded.last_price,
        last_date = excluded.last_date,
        currency = excluded.currency,
+       median_7d = excluded.median_7d,
+       median_30d = excluded.median_30d,
+       p25_30d = excluded.p25_30d,
+       volatility_pct = excluded.volatility_pct,
+       baseline_price = excluded.baseline_price,
+       recent_price = excluded.recent_price,
+       boost_score = excluded.boost_score,
        fetched_at = datetime('now')`,
   ).run(
     itemId,
@@ -197,7 +213,54 @@ export function upsertItemStats(
     stats.lastPrice,
     stats.lastDate,
     stats.currency,
+    stats.median7d,
+    stats.median30d,
+    stats.p25_30d,
+    stats.volatilityPct,
+    stats.baselinePrice,
+    stats.recentPrice,
+    stats.boostScore,
   );
+}
+
+/** Точка истории для price_points: unix-секунды, цена (minor units), qty. */
+export interface PricePointInput {
+  ts: number;
+  price: number;
+  qty: number;
+}
+
+/**
+ * Полностью заменяет сырые точки истории предмета в price_points.
+ * В одной транзакции: удаляет старые точки предмета и вставляет заново только
+ * те, что не старше 35 дней от МАКСИМАЛЬНОГО ts набора (от свежести самих
+ * данных, а не от Date.now() — так тесты с историческими точками не обрезаются
+ * целиком). Дубли ts схлопываются PRIMARY KEY(item_id, ts) через INSERT OR REPLACE.
+ */
+export function replaceItemPoints(
+  db: Database.Database,
+  itemId: number,
+  points: PricePointInput[],
+  currency: number,
+): void {
+  const del = db.prepare(`DELETE FROM price_points WHERE item_id = ?`);
+  const ins = db.prepare(
+    `INSERT OR REPLACE INTO price_points (item_id, ts, price, qty, currency)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const WINDOW_SEC = 35 * 24 * 60 * 60;
+  const tx = db.transaction((pts: PricePointInput[]) => {
+    del.run(itemId);
+    if (pts.length === 0) return;
+    let maxTs = -Infinity;
+    for (const p of pts) if (p.ts > maxTs) maxTs = p.ts;
+    const cutoff = maxTs - WINDOW_SEC;
+    for (const p of pts) {
+      if (p.ts < cutoff) continue; // старше 35 дней от свежести набора — отбрасываем
+      ins.run(itemId, p.ts, p.price, p.qty, currency);
+    }
+  });
+  tx(points);
 }
 
 /**
