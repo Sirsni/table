@@ -50,6 +50,12 @@ export interface SyncItemsOptions {
   app: number;
   /** Не задано -> синхронизируем ВЕСЬ каталог (все страницы по total_count). */
   pages?: number;
+  /**
+   * Паузы (мс) перед повтором того же offset при пустой странице — «тихий
+   * троттлинг» search/render отдаёт 200 с пустыми results вместо 429.
+   * Переопределяется в тестах. По умолчанию 5с/15с/30с.
+   */
+  emptyRetryWaitsMs?: number[];
   onProgress?: (p: CollectProgress) => void;
   signal?: AbortSignal;
 }
@@ -90,6 +96,25 @@ function isRateLimit(err: unknown): boolean {
   return err instanceof SteamHttpError && err.status === 429;
 }
 
+/** Пауза, разрешающаяся досрочно при abort (для ожиданий внутри sync). */
+function waitAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const t = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /**
  * Загружает список предметов рынка (search/render) ПОСЛЕДОВАТЕЛЬНО и upsert-ит
  * их в БД. Особенности выдачи Steam (новый рынок):
@@ -123,12 +148,15 @@ export async function syncItems(
     onProgress?.({ processed, total: processed, ok, fail, lastName });
   };
 
-  const STOP_AFTER_EMPTY = 5; // столько пустых страниц подряд = конец выдачи
+  const STOP_AFTER_EMPTY = 5; // столько пустых offset'ов подряд = конец выдачи
+  const emptyRetryWaits = opts.emptyRetryWaitsMs ?? [5000, 15000, 30000];
   const maxPages = pages != null ? pages : Infinity;
 
   let pageIndex = 0;
   let start = 0;
   let consecutiveEmpty = 0;
+  // Повторы текущего offset при пустой странице (тихий троттлинг search/render).
+  let emptyRetries = 0;
   // Фактический размер страницы Steam (обычно 10, не 100) — узнаём из ответов.
   let pageSizeEstimate = MARKET_PAGE_SIZE;
   let loggedPageSize = false;
@@ -157,11 +185,39 @@ export async function syncItems(
 
     const got = page.items.length;
     if (got === 0) {
+      const expectedMore =
+        page.totalCount === null || start < page.totalCount;
+      if (expectedMore && emptyRetries < emptyRetryWaits.length) {
+        // Тихий троттлинг: 200 с пустыми results вместо 429. Ждём и повторяем
+        // ТОТ ЖЕ offset — обычно после паузы выдача возвращается.
+        const wait = emptyRetryWaits[emptyRetries];
+        emptyRetries += 1;
+        console.log(
+          `[sync] пустая страница start=${start} при total_count=${page.totalCount} ` +
+            `— похоже на тихий троттлинг search/render; пауза ${Math.round(wait / 1000)}с ` +
+            `и повтор (${emptyRetries}/${emptyRetryWaits.length})`,
+        );
+        await waitAbortable(wait, ctrl.signal);
+        continue; // offset и pageIndex не двигаем
+      }
+      // Паузы не помогли (или данных правда больше нет).
+      emptyRetries = 0;
       consecutiveEmpty += 1;
-      if (consecutiveEmpty >= STOP_AFTER_EMPTY) break; // выдача иссякла
+      console.log(
+        `[sync] offset ${start} пуст после всех повторов ` +
+          `(пустых подряд: ${consecutiveEmpty}/${STOP_AFTER_EMPTY})`,
+      );
+      if (consecutiveEmpty >= STOP_AFTER_EMPTY) {
+        stoppedReason =
+          "Steam перестал отдавать страницы каталога (тихий троттлинг " +
+          "search/render не прошёл после пауз). Собранное сохранено; запусти " +
+          "синхронизацию позже, чтобы добрать остальное.";
+        break;
+      }
       start += pageSizeEstimate;
     } else {
       consecutiveEmpty = 0;
+      emptyRetries = 0;
       pageSizeEstimate = got;
       if (!loggedPageSize) {
         loggedPageSize = true;
