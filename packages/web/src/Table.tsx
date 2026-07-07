@@ -55,24 +55,13 @@ const columns: ColumnDef<ItemDto>[] = [
           >
             {item.name}
           </a>
-          {item.boostSuspect === true && (
-            <span
-              className="badge-boost"
-              title={
-                "Недавние цены аномально выше месячной нормы" +
-                (item.boostScore ? `, x${item.boostScore}` : "")
-              }
-            >
-              ⚠ буст
-            </span>
-          )}
         </div>
       );
     },
   },
   {
     id: "buyUsd",
-    header: "Покупка $",
+    header: "Покупка",
     accessorKey: "buyUsd",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => (
@@ -81,7 +70,7 @@ const columns: ColumnDef<ItemDto>[] = [
   },
   {
     id: "sellUsd",
-    header: "Продажа $",
+    header: "Продажа",
     accessorKey: "sellUsd",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => (
@@ -89,17 +78,8 @@ const columns: ColumnDef<ItemDto>[] = [
     ),
   },
   {
-    id: "receiveUsd",
-    header: "Выручка $",
-    accessorKey: "receiveUsd",
-    sortingFn: nullsLastSort,
-    cell: ({ getValue }) => (
-      <span className="col-num">{usd(getValue<number | null>())}</span>
-    ),
-  },
-  {
     id: "profitUsd",
-    header: "Прибыль $",
+    header: "Прибыль",
     accessorKey: "profitUsd",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => {
@@ -111,7 +91,7 @@ const columns: ColumnDef<ItemDto>[] = [
   },
   {
     id: "marginPct",
-    header: "Маржа %",
+    header: "Маржа",
     accessorKey: "marginPct",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => {
@@ -133,7 +113,7 @@ const columns: ColumnDef<ItemDto>[] = [
   },
   {
     id: "sales7d",
-    header: "Продаж/нед",
+    header: "Прод/нед",
     accessorKey: "sales7d",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => (
@@ -142,7 +122,7 @@ const columns: ColumnDef<ItemDto>[] = [
   },
   {
     id: "sales30d",
-    header: "Продаж/мес",
+    header: "Прод/мес",
     accessorKey: "sales30d",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => (
@@ -150,17 +130,8 @@ const columns: ColumnDef<ItemDto>[] = [
     ),
   },
   {
-    id: "avg30dUsd",
-    header: "Средняя $",
-    accessorKey: "avg30dUsd",
-    sortingFn: nullsLastSort,
-    cell: ({ getValue }) => (
-      <span className="col-num">{usd(getValue<number | null>())}</span>
-    ),
-  },
-  {
     id: "median30dUsd",
-    header: "Медиана $",
+    header: "Медиана",
     accessorKey: "median30dUsd",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => (
@@ -169,7 +140,7 @@ const columns: ColumnDef<ItemDto>[] = [
   },
   {
     id: "realProfitUsd",
-    header: "Реал. прибыль $",
+    header: "Р.прибыль",
     accessorKey: "realProfitUsd",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => {
@@ -181,7 +152,7 @@ const columns: ColumnDef<ItemDto>[] = [
   },
   {
     id: "realMarginPct",
-    header: "Реал. маржа %",
+    header: "Р.маржа",
     accessorKey: "realMarginPct",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => {
@@ -193,7 +164,7 @@ const columns: ColumnDef<ItemDto>[] = [
   },
   {
     id: "dipPct",
-    header: "Скидка %",
+    header: "Скидка",
     accessorKey: "dipPct",
     sortingFn: nullsLastSort,
     cell: ({ getValue }) => {
@@ -201,6 +172,26 @@ const columns: ColumnDef<ItemDto>[] = [
       return (
         <span className={`col-num ${signedClass(v) ?? ""}`}>
           {signedPct(v)}
+        </span>
+      );
+    },
+  },
+  {
+    id: "boost",
+    header: "Буст",
+    accessorKey: "boostScore",
+    sortingFn: nullsLastSort,
+    cell: ({ row }) => {
+      const item = row.original;
+      if (item.boostSuspect !== true) {
+        return <span className="col-num">{"—"}</span>;
+      }
+      return (
+        <span
+          className="badge-boost"
+          title="Недавние цены аномально выше месячной нормы предмета"
+        >
+          ⚠{item.boostScore !== null ? ` x${item.boostScore}` : ""}
         </span>
       );
     },

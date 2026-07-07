@@ -237,37 +237,51 @@ export function queryItems(
       st && st.median_30d !== null
         ? toUsdCents(st.median_30d, st.currency)
         : null;
+    // Самая свежая доступная медиана сделок (3д -> 7д -> 30д) в USD-центах.
+    // Для трендовых предметов (обвал/рост) старые окна врут — берём свежайшее.
+    const freshMedianGross =
+      st !== undefined
+        ? (st.recent_price ?? st.median_7d ?? st.median_30d)
+        : null;
+    const freshMedianUsdCents =
+      freshMedianGross !== null && st !== undefined
+        ? toUsdCents(freshMedianGross, st.currency)
+        : null;
 
-    // dipPct: насколько текущая продажа ниже средней (VWAP-30д). Обе цены
-    // приводим к одной базе (USD-центы), чтобы валюты снапшота и истории не
-    // искажали сравнение. >0 = текущая продажа дешевле средней (скидка).
+    // dipPct: насколько текущий нижний лот ниже СВЕЖЕЙ медианы сделок.
+    // >0 = лот дешевле недавней нормы (шанс выкупа). Раньше сравнивали с
+    // VWAP-30д — на обвалившихся предметах давало бессмысленные +99%.
     let dipPct: number | null = null;
     if (
-      avg30UsdCents !== null &&
-      avg30UsdCents > 0 &&
+      freshMedianUsdCents !== null &&
+      freshMedianUsdCents > 0 &&
       lowestSellUsdCents !== null
     ) {
       dipPct = round2(
-        ((avg30UsdCents - lowestSellUsdCents) / avg30UsdCents) * 100,
+        ((freshMedianUsdCents - lowestSellUsdCents) / freshMedianUsdCents) * 100,
       );
     }
 
-    // Реальная маржа: считаем выручку не по номинальному стакану, а по медиане
-    // фактически прошедших сделок (median7d приоритетнее — свежее; иначе median30d).
-    // Для sellTo=steam_auto продажа идёт «в бид» и исполняется гарантированно —
-    // реальная цена совпадает с номинальной, поэтому real == nominal.
+    // Реальная маржа: выручка не по номинальному стакану, а по РЕАЛИСТИЧНОЙ
+    // цене продажи = min(текущий нижний лот, свежая медиана сделок).
+    // Логика: дороже нижнего лота продать нельзя (купят лот), а медиана
+    // защищает от забустенного лота. Кламп min() чинит обвалившиеся предметы
+    // (медиана прошлого месяца недостижима) и бусты одновременно.
+    // Для sellTo=steam_auto продажа идёт «в бид» гарантированно — real == nominal.
     let realProfitUsd: number | null;
     let realMarginPct: number | null;
     if (sellTo === "steam_auto") {
       realProfitUsd = centsToUsd(profitUsdCents);
       realMarginPct = round2(margin);
     } else {
-      const realSellGross =
-        st !== undefined ? (st.median_7d ?? st.median_30d) : null;
-      const realReceiveUsdCents =
-        realSellGross !== null && st !== undefined
-          ? toUsdCents(sellerReceives(realSellGross), st.currency)
+      const realSellUsdCents =
+        freshMedianUsdCents !== null && lowestSellUsdCents !== null
+          ? Math.min(lowestSellUsdCents, freshMedianUsdCents)
           : null;
+      // sellerReceives на USD-центах: комиссия пропорциональна, погрешность
+      // округления <= 1-2 цента — приемлемо для оценочной метрики.
+      const realReceiveUsdCents =
+        realSellUsdCents !== null ? sellerReceives(realSellUsdCents) : null;
       if (realReceiveUsdCents !== null && buyUsdCents !== null) {
         const realProfitUsdCents = realReceiveUsdCents - buyUsdCents;
         realProfitUsd = centsToUsd(realProfitUsdCents);

@@ -207,13 +207,13 @@ button.button--danger {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 thead th {
   background: var(--bg-elevated);
   text-align: left;
-  padding: 8px 10px;
+  padding: 6px 7px;
   font-weight: 600;
   white-space: nowrap;
   border-bottom: 1px solid var(--border);
@@ -226,7 +226,7 @@ thead th:hover {
 }
 
 tbody td {
-  padding: 6px 10px;
+  padding: 3px 7px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
@@ -244,24 +244,24 @@ tbody tr:hover {
 .col-name {
   display: flex;
   align-items: center;
-  gap: 8px;
-  max-width: 360px;
+  gap: 6px;
+  max-width: 320px;
   overflow: hidden;
 }
 
 .col-name__icon {
-  width: 32px;
-  height: 32px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
   flex-shrink: 0;
   background: var(--bg-elevated);
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
 .col-name__icon--empty {
   display: inline-block;
-  width: 32px;
-  height: 32px;
+  width: 22px;
+  height: 22px;
   flex-shrink: 0;
 }
 
