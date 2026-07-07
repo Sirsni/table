@@ -1,4 +1,23 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { SteamHttp } from "./http.js";
+
+// Отладочный лог сырых ответов search/render (пустые/битые страницы) — чтобы
+// разбирать «тихие» остановки синхронизации по фактическим телам ответов.
+// dist/steam/searchRender.js -> 4 уровня вверх = корень репозитория.
+const DEBUG_LOG_PATH = fileURLToPath(
+  new URL("../../../../data/sync-debug.log", import.meta.url),
+);
+
+function debugLog(line: string): void {
+  try {
+    mkdirSync(dirname(DEBUG_LOG_PATH), { recursive: true });
+    appendFileSync(DEBUG_LOG_PATH, line + "\n");
+  } catch {
+    /* отладка не должна ронять сбор */
+  }
+}
 
 export interface MarketSearchItem {
   marketHashName: string;
@@ -75,12 +94,29 @@ export async function fetchMarketPage(
 ): Promise<MarketPage> {
   const url = buildUrl(appId, start);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const resp = await http.getJson<RenderResponseRaw>(url, signal);
+    // Берём сырой текст (не getJson), чтобы при пустых/битых ответах записать
+    // фактическое тело в data/sync-debug.log для разбора.
+    const text = await http.getText(url, signal);
+    let resp: RenderResponseRaw | null = null;
+    try {
+      resp = JSON.parse(text) as RenderResponseRaw;
+    } catch {
+      debugLog(
+        `${new Date().toISOString()} start=${start} NOT_JSON body=${text.slice(0, 800)}`,
+      );
+    }
     if (resp && resp.success !== false && Array.isArray(resp.results)) {
       const items: MarketSearchItem[] = [];
       for (const r of resp.results) {
         const it = mapResult(r);
         if (it) items.push(it);
+      }
+      if (items.length === 0) {
+        // Пустая страница — главный подозреваемый «тихих» остановок: пишем
+        // сырое тело целиком (обрезано), чтобы видеть total_count/поля заглушки.
+        debugLog(
+          `${new Date().toISOString()} start=${start} EMPTY body=${text.slice(0, 800)}`,
+        );
       }
       return {
         items,
@@ -88,6 +124,9 @@ export async function fetchMarketPage(
           typeof resp.total_count === "number" ? resp.total_count : null,
       };
     }
+    debugLog(
+      `${new Date().toISOString()} start=${start} BAD success=${resp?.success} body=${text.slice(0, 800)}`,
+    );
     if (attempt === 0) {
       console.warn(
         `[search] страница start=${start} вернула success=${resp?.success} / results=${

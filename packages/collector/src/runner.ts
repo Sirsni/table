@@ -160,6 +160,10 @@ export async function syncItems(
   // Фактический размер страницы Steam (обычно 10, не 100) — узнаём из ответов.
   let pageSizeEstimate = MARKET_PAGE_SIZE;
   let loggedPageSize = false;
+  // total_count ДОВЕРЯЕМ только из НЕпустых страниц: заглушка тихого троттлинга
+  // отдаёт пустые results с total_count=0, и по нему нельзя ни судить «данных
+  // больше нет», ни завершать цикл (была ранняя остановка ровно из-за этого).
+  let knownTotal: number | null = null;
 
   while (!ctrl.signal.aborted && pageIndex < maxPages) {
     let page;
@@ -185,17 +189,17 @@ export async function syncItems(
 
     const got = page.items.length;
     if (got === 0) {
-      const expectedMore =
-        page.totalCount === null || start < page.totalCount;
+      const expectedMore = knownTotal === null || start < knownTotal;
       if (expectedMore && emptyRetries < emptyRetryWaits.length) {
         // Тихий троттлинг: 200 с пустыми results вместо 429. Ждём и повторяем
         // ТОТ ЖЕ offset — обычно после паузы выдача возвращается.
         const wait = emptyRetryWaits[emptyRetries];
         emptyRetries += 1;
         console.log(
-          `[sync] пустая страница start=${start} при total_count=${page.totalCount} ` +
-            `— похоже на тихий троттлинг search/render; пауза ${Math.round(wait / 1000)}с ` +
-            `и повтор (${emptyRetries}/${emptyRetryWaits.length})`,
+          `[sync] пустая страница start=${start} (в ответе total_count=${page.totalCount}, ` +
+            `по непустым известно ${knownTotal ?? "—"}) — похоже на тихий троттлинг ` +
+            `search/render; пауза ${Math.round(wait / 1000)}с и повтор ` +
+            `(${emptyRetries}/${emptyRetryWaits.length}); сырой ответ пишется в data/sync-debug.log`,
         );
         await waitAbortable(wait, ctrl.signal);
         continue; // offset и pageIndex не двигаем
@@ -219,9 +223,15 @@ export async function syncItems(
       consecutiveEmpty = 0;
       emptyRetries = 0;
       pageSizeEstimate = got;
+      // total_count берём только с непустых страниц (см. knownTotal выше).
+      if (page.totalCount !== null && page.totalCount > 0) {
+        knownTotal = Math.max(knownTotal ?? 0, page.totalCount);
+      }
       if (!loggedPageSize) {
         loggedPageSize = true;
-        console.log(`[sync] Steam отдаёт по ${got} предметов на страницу`);
+        console.log(
+          `[sync] Steam отдаёт по ${got} предметов на страницу; total_count=${knownTotal ?? "—"}`,
+        );
       }
       for (const item of page.items) {
         lastName = item.marketHashName;
@@ -239,8 +249,8 @@ export async function syncItems(
     }
 
     pageIndex += 1;
-    // total_count как верхняя граница (если вдруг дошли).
-    if (page.totalCount !== null && start >= page.totalCount) break;
+    // Верхняя граница — только ДОВЕРЕННЫЙ total (из непустых страниц).
+    if (knownTotal !== null && start >= knownTotal) break;
   }
 
   return { ok, fail, processed, stoppedReason };

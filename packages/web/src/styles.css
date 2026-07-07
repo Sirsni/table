@@ -204,11 +204,18 @@ button.button--danger {
   border-radius: 8px;
 }
 
-/* Без width:100% — таблица по ширине контента, колонки прижаты друг к другу
-   (иначе излишек ширины экрана растягивал колонку «Название»). */
+/* На всю ширину, но с фиксированной раскладкой: «Название» получает свою долю,
+   а ОСТАЛЬНЫЕ колонки делят остаток ПОРОВНУ (иначе браузер отдавал весь излишек
+   ширины экрана колонке «Название»). */
 table {
+  width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 0.85rem;
+}
+
+thead th:first-child {
+  width: 24%;
 }
 
 thead th {
@@ -246,7 +253,8 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 320px;
+  /* ширину задаёт колонка (table-layout: fixed), длинные имена обрезаются */
+  max-width: 100%;
   overflow: hidden;
 }
 
@@ -344,13 +352,9 @@ tbody tr:hover {
   padding-bottom: 4px;
 }
 
-/* Гарантируем, что заголовки таблицы не переносятся и колонки имеют мин. ширину */
-thead th {
-  min-width: 60px;
-}
-
+/* На узких окнах не даём колонкам схлопнуться — включается горизонтальный скролл */
 table {
-  min-width: max-content;
+  min-width: 1200px;
 }
 
 .col-num {
