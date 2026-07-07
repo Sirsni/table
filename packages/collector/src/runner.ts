@@ -91,20 +91,17 @@ function isRateLimit(err: unknown): boolean {
 }
 
 /**
- * Загружает список предметов рынка (search/render) и upsert-ит их в БД.
- * Первая страница даёт total_count, остальные страницы тянутся пулом воркеров
- * (размер = http.concurrency). Отмена (signal/«Стоп») и предохранитель 429
- * мгновенно прерывают запросы и паузы.
- */
-/**
  * Загружает список предметов рынка (search/render) ПОСЛЕДОВАТЕЛЬНО и upsert-ит
- * их в БД. Steam отдаёт total_count огромным (десятки тысяч), но реально на
- * глубоких страницах возвращает пустой results (200, items=[]), особенно под
- * параллельной нагрузкой — поэтому идём по страницам по порядку и ОСТАНАВЛИВАЕМСЯ
- * после нескольких подряд пустых страниц (а не молотим все offset'ы до
- * total_count, выжигая лимит). Параллельность тут намеренно не используется:
- * она провоцирует пустые ответы и тратит квоту. Отмена/429-предохранитель — как
- * везде. total в прогрессе = реально собранное (total_count недостижим и сбивает).
+ * их в БД. Особенности выдачи Steam (новый рынок):
+ * - count=100 в запросе ИГНОРИРУЕТСЯ: страница реально отдаёт ~10 предметов,
+ *   поэтому offset двигаем на ФАКТИЧЕСКИ полученное число (иначе перепрыгиваем
+ *   90% каталога — был такой баг);
+ * - total_count огромный (десятки тысяч), но на некоторой глубине страницы
+ *   становятся пустыми (200, items=[]) — останавливаемся после нескольких
+ *   пустых подряд, а не молотим все offset'ы, выжигая лимит;
+ * - на пустой странице offset двигаем на последний известный размер страницы.
+ * Параллельность намеренно не используется: она провоцирует пустые ответы.
+ * total в прогрессе = реально собранное (total_count недостижим и сбивает).
  */
 export async function syncItems(
   db: Database.Database,
@@ -132,6 +129,9 @@ export async function syncItems(
   let pageIndex = 0;
   let start = 0;
   let consecutiveEmpty = 0;
+  // Фактический размер страницы Steam (обычно 10, не 100) — узнаём из ответов.
+  let pageSizeEstimate = MARKET_PAGE_SIZE;
+  let loggedPageSize = false;
 
   while (!ctrl.signal.aborted && pageIndex < maxPages) {
     let page;
@@ -148,18 +148,25 @@ export async function syncItems(
           break;
         }
       }
-      // прочая ошибка страницы — двигаемся дальше
-      start += MARKET_PAGE_SIZE;
+      // прочая ошибка страницы — двигаемся дальше на оценку размера страницы
+      start += pageSizeEstimate;
       pageIndex += 1;
       emit();
       continue;
     }
 
-    if (page.items.length === 0) {
+    const got = page.items.length;
+    if (got === 0) {
       consecutiveEmpty += 1;
       if (consecutiveEmpty >= STOP_AFTER_EMPTY) break; // выдача иссякла
+      start += pageSizeEstimate;
     } else {
       consecutiveEmpty = 0;
+      pageSizeEstimate = got;
+      if (!loggedPageSize) {
+        loggedPageSize = true;
+        console.log(`[sync] Steam отдаёт по ${got} предметов на страницу`);
+      }
       for (const item of page.items) {
         lastName = item.marketHashName;
         try {
@@ -171,9 +178,10 @@ export async function syncItems(
         processed += 1;
       }
       emit();
+      // Двигаемся ровно на фактически полученное — без пропусков.
+      start += got;
     }
 
-    start += MARKET_PAGE_SIZE;
     pageIndex += 1;
     // total_count как верхняя граница (если вдруг дошли).
     if (page.totalCount !== null && start >= page.totalCount) break;
