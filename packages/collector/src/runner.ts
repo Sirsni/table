@@ -149,7 +149,9 @@ export async function syncItems(
   };
 
   const STOP_AFTER_EMPTY = 5; // столько пустых offset'ов подряд = конец выдачи
-  const emptyRetryWaits = opts.emptyRetryWaitsMs ?? [5000, 15000, 30000];
+  // Заглушка обычно снимается мгновенно (по логам владельца: раз в ~30 запросов,
+  // проходит с первого повтора) — начинаем с 0.5с и эскалируем на упорных.
+  const emptyRetryWaits = opts.emptyRetryWaitsMs ?? [500, 1500, 5000, 15000, 30000];
   const maxPages = pages != null ? pages : Infinity;
 
   let pageIndex = 0;
@@ -347,6 +349,9 @@ export async function enrichHistory(
   const { app, limit, onProgress } = opts;
   const currency = opts.currency ?? 1; // валюта запроса истории (1 = USD)
   const ctrl = linkedController(opts.signal);
+  // pricehistory игнорирует параметр валюты и отдаёт валюту КОШЕЛЬКА аккаунта —
+  // сохраняем фактическую (по price_prefix/suffix), предупреждаем один раз.
+  let warnedCurrency = false;
 
   const items = listItemsForHistoryUpdate(db, app, limit);
   const total = items.length;
@@ -377,6 +382,16 @@ export async function enrichHistory(
           currency,
           ctrl.signal,
         );
+        // Фактическая валюта истории (валюта кошелька аккаунта), а не запрошенная.
+        const effCurrency = history.currency ?? currency;
+        if (!warnedCurrency && effCurrency !== currency) {
+          warnedCurrency = true;
+          console.warn(
+            `[enrich] Steam отдаёт историю в валюте кошелька аккаунта ` +
+              `(eCurrency=${effCurrency}), а не запрошенной (${currency}) — ` +
+              `сохраняю с фактической валютой; в USD конвертирует сервер.`,
+          );
+        }
         const stats = computeStats(history.points);
         replaceItemPoints(
           db,
@@ -386,9 +401,9 @@ export async function enrichHistory(
             price: p.priceCents,
             qty: p.qty,
           })),
-          currency,
+          effCurrency,
         );
-        upsertItemStats(db, it.id, { ...stats, currency });
+        upsertItemStats(db, it.id, { ...stats, currency: effCurrency });
         ok++;
         rateLimited = 0; // успех сбрасывает счётчик 429
       } catch (err) {

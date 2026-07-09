@@ -29,6 +29,38 @@ export interface PriceHistoryPoint {
 
 export interface PriceHistory {
   points: PriceHistoryPoint[];
+  /**
+   * ФАКТИЧЕСКАЯ валюта истории (Steam eCurrency), определённая по
+   * price_prefix/suffix ответа, либо null, если распознать не удалось.
+   * ВАЖНО: pricehistory ИГНОРИРУЕТ параметр currency в URL и отдаёт цены в
+   * валюте КОШЕЛЬКА аккаунта, чей cookie использован (у RU-аккаунта — рубли).
+   */
+  currency: number | null;
+}
+
+/**
+ * Определяет Steam eCurrency по префиксу/суффиксу цены из ответа pricehistory.
+ * Steam пишет «руб.» иногда с латинской p («pуб.») — матчим оба алфавита.
+ */
+export function detectHistoryCurrency(
+  prefix: string | undefined,
+  suffix: string | undefined,
+): number | null {
+  const s = `${prefix ?? ""} ${suffix ?? ""}`.trim();
+  if (s === "") return null;
+  if (/[pр]у[б6]/i.test(s)) return 5; // RUB («руб.» / «pуб.»)
+  if (s.includes("zł")) return 6; // PLN
+  if (s.includes("€")) return 3; // EUR
+  if (s.includes("£")) return 2; // GBP
+  if (s.includes("CHF")) return 4;
+  if (s.includes("R$")) return 7; // BRL
+  if (s.includes("¥")) return 8; // JPY
+  if (s.includes("kr")) return 9; // NOK (и прочие kr — трактуем как NOK)
+  if (s.includes("₴")) return 18; // UAH
+  if (s.includes("CDN$")) return 20; // CAD
+  if (s.includes("A$")) return 21; // AUD
+  if (s.includes("$")) return 1; // USD (после проверки составных *$)
+  return null;
 }
 
 interface PriceHistoryResponseRaw {
@@ -115,5 +147,8 @@ export async function fetchPriceHistory(
     );
   }
 
-  return { points };
+  return {
+    points,
+    currency: detectHistoryCurrency(data.price_prefix, data.price_suffix),
+  };
 }
