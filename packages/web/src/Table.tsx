@@ -163,6 +163,37 @@ const columns: ColumnDef<ItemDto>[] = [
     },
   },
   {
+    id: "fill30d",
+    header: "Исполн/мес",
+    accessorKey: "fill30d",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => (
+      <span className="col-num">{count(getValue<number | null>())}</span>
+    ),
+  },
+  {
+    id: "expProfitUsd",
+    header: "Ож.приб/мес",
+    accessorKey: "expProfitUsd",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return (
+        <span className={`col-num ${signedClass(v) ?? ""}`}>{usd(v)}</span>
+      );
+    },
+  },
+  {
+    id: "turnoverDays",
+    header: "Оборот, дн",
+    accessorKey: "turnoverDays",
+    sortingFn: nullsLastSort,
+    cell: ({ getValue }) => {
+      const v = getValue<number | null>();
+      return <span className="col-num">{v === null ? "—" : v}</span>;
+    },
+  },
+  {
     id: "dipPct",
     header: "Скидка",
     accessorKey: "dipPct",

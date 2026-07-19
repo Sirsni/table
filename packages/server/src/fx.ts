@@ -173,6 +173,26 @@ export function toUsdCents(
   return Math.round(amountMinor / rate);
 }
 
+/**
+ * Обратная конвертация: USD-центы -> минимальные единицы валюты eCurrency.
+ * Нужна, когда порог задан в USD, а сравнивать надо с ценами, хранящимися в
+ * исходной валюте (например, порог бида против price_points в валюте кошелька).
+ */
+export function fromUsdCents(
+  usdCents: number | null,
+  eCurrency: number | null,
+): number | null {
+  if (usdCents === null || !Number.isFinite(usdCents)) return null;
+  const iso = eCurrencyToIso(eCurrency);
+  if (iso === null) return null;
+  if (iso === "USD") return Math.round(usdCents);
+  const rate = currentRates()[iso];
+  if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) {
+    return null;
+  }
+  return Math.round(usdCents * rate);
+}
+
 /** Список ISO-валют, для которых нужен курс, но его нет в текущих rates. */
 export function fxStatus(): { updatedAt: string | null; missing: string[] } {
   const rates = currentRates();

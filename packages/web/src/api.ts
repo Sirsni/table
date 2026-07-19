@@ -26,6 +26,9 @@ export interface ItemDto {
   median30dUsd: number | null;
   realProfitUsd: number | null;
   realMarginPct: number | null;
+  fill30d: number | null;
+  expProfitUsd: number | null;
+  turnoverDays: number | null;
   boostScore: number | null;
   boostSuspect: boolean | null;
 }
@@ -54,7 +57,10 @@ export type SortKey =
   | "sales30d"
   | "sales7d"
   | "dip"
-  | "realMargin";
+  | "realMargin"
+  | "fill30d"
+  | "expProfit"
+  | "turnover";
 export type SortDir = "asc" | "desc";
 
 export type CollectorKind = "sync" | "update" | "enrich" | null;

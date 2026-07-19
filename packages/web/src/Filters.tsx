@@ -51,6 +51,9 @@ const SORT_KEYS: Array<{ value: SortKey; label: string }> = [
   { value: "sales30d", label: "Продаж/мес" },
   { value: "dip", label: "Скидка %" },
   { value: "realMargin", label: "Реал. маржа %" },
+  { value: "expProfit", label: "Ож. прибыль/мес" },
+  { value: "fill30d", label: "Исполнений/мес" },
+  { value: "turnover", label: "Оборот, дн" },
 ];
 
 const DEBOUNCE_MS = 400;

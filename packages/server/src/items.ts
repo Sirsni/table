@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import { sellerReceives } from "@table/shared";
-import { toUsdCents } from "./fx.js";
+import { fromUsdCents, toUsdCents } from "./fx.js";
 
 /**
  * Источник цены: STEAM = обычный листинг (нижний лот), STEAM(AUTO) = верхний
@@ -26,7 +26,10 @@ export type SortKey =
   | "sales30d"
   | "sales7d"
   | "dip"
-  | "realMargin";
+  | "realMargin"
+  | "fill30d"
+  | "expProfit"
+  | "turnover";
 export type SortDir = "asc" | "desc";
 
 export interface QueryItemsParams {
@@ -88,6 +91,22 @@ export interface ItemDto {
   /** boostScore из истории (recent/baseline медиана), round2, либо null. */
   boostScore: number | null;
   /**
+   * Сколько штук за 30 дней продано по цене <= бид*1.02 (по price_points) —
+   * оценка «сколько раз в месяц мой автозапрос реально исполнился бы».
+   * null: нет истории точек или неизвестен курс валюты кошелька.
+   */
+  fill30d: number | null;
+  /**
+   * Ожидаемая прибыль/мес, USD: fill30d * realProfitUsd (знак сохраняется).
+   * null, если нет fill30d или realProfitUsd.
+   */
+  expProfitUsd: number | null;
+  /**
+   * Оценка оборота: за сколько дней текущая очередь лотов (volume=cSellOrders)
+   * рассосётся при темпе sales30d/30 продаж в день. null без данных/продаж.
+   */
+  turnoverDays: number | null;
+  /**
    * Подозрение на буст/накрутку цены. null, если истории нет.
    * true, если boostScore >= 1.5 ИЛИ текущий нижний лот >= 1.5x медианы-30д
    * при достаточном объёме продаж (>=5 за 30д).
@@ -140,6 +159,9 @@ const VALID_SORTS = new Set<SortKey>([
   "sales7d",
   "dip",
   "realMargin",
+  "fill30d",
+  "expProfit",
+  "turnover",
 ]);
 
 function round2(n: number | null): number | null {
@@ -201,6 +223,49 @@ export function queryItems(
 
   const buyFrom: Service = params.buyFrom ?? "steam_auto";
   const sellTo: Service = params.sellTo ?? "steam";
+
+  // === fill rate: сколько штук за 30д продано по цене <= текущий автозапрос*1.02 ===
+  // Точки (price_points) хранятся в валюте КОШЕЛЬКА (item_stats.currency), а
+  // автозапрос (buy_order) — в валюте снапшота. Порог считаем через USD-центы:
+  // bid -> USD -> валюта кошелька. Агрегация одним SQL через temp-таблицу
+  // порогов (по-предметный порог; 10k INSERT в транзакции — миллисекунды),
+  // иначе пришлось бы тянуть миллионы точек в JS на каждый запрос API.
+  const cutoff30 = Math.floor(Date.now() / 1000) - 30 * 24 * 3600;
+  const fillById = new Map<number, number>();
+  {
+    const thrRows: Array<{ id: number; thr: number }> = [];
+    for (const r of rows) {
+      const st = statsById.get(r.id);
+      if (!st || st.currency === null || r.buy_order === null) continue;
+      const bidUsd = toUsdCents(r.buy_order, r.currency);
+      if (bidUsd === null) continue;
+      const thr = fromUsdCents(Math.round(bidUsd * 1.02), st.currency);
+      if (thr === null) continue;
+      thrRows.push({ id: r.id, thr });
+    }
+    if (thrRows.length > 0) {
+      db.exec(
+        `CREATE TEMP TABLE IF NOT EXISTS _fill_thr(
+           item_id INTEGER PRIMARY KEY, thr INTEGER NOT NULL);
+         DELETE FROM _fill_thr;`,
+      );
+      const ins = db.prepare(`INSERT INTO _fill_thr(item_id, thr) VALUES (?, ?)`);
+      db.transaction((xs: typeof thrRows) => {
+        for (const x of xs) ins.run(x.id, x.thr);
+      })(thrRows);
+      const agg = db
+        .prepare(
+          `SELECT p.item_id AS id, SUM(p.qty) AS fv
+           FROM price_points p JOIN _fill_thr t ON t.item_id = p.item_id
+           WHERE p.ts >= ? AND p.price <= t.thr
+           GROUP BY p.item_id`,
+        )
+        .all(cutoff30) as Array<{ id: number; fv: number }>;
+      for (const a of agg) fillById.set(a.id, a.fv);
+      // Порог был, но подходящих точек нет — это честный 0, не null.
+      for (const x of thrRows) if (!fillById.has(x.id)) fillById.set(x.id, 0);
+    }
+  }
 
   // Преобразуем в DTO с конвертацией в USD.
   let dtos: ItemDto[] = rows.map((r) => {
@@ -312,6 +377,20 @@ export function queryItems(
       boostSuspect = byScore || byRatio;
     }
 
+    const fill30d = fillById.has(r.id) ? (fillById.get(r.id) as number) : null;
+    // Оборот: дней до рассасывания текущей очереди лотов темпом продаж 30д.
+    const turnoverDays =
+      st && st.sales_30d !== null && st.sales_30d > 0 && r.volume !== null
+        ? round2(r.volume / (st.sales_30d / 30))
+        : null;
+    // Ожидаемая прибыль/мес осмысленна ТОЛЬКО для покупки автозапросом
+    // (fill — вероятность исполнения бида); при buyFrom=steam покупка мгновенна
+    // и fill к ней не относится — null, а не ложное число.
+    const expProfitUsd =
+      buyFrom === "steam_auto" && fill30d !== null && realProfitUsd !== null
+        ? round2(fill30d * realProfitUsd)
+        : null;
+
     return {
       name: r.market_hash_name,
       appId: r.app_id,
@@ -335,6 +414,9 @@ export function queryItems(
       dipPct,
       realProfitUsd,
       realMarginPct,
+      fill30d,
+      expProfitUsd,
+      turnoverDays,
       boostScore,
       boostSuspect,
     };
@@ -408,6 +490,12 @@ export function queryItems(
         return d.dipPct;
       case "realMargin":
         return d.realMarginPct;
+      case "fill30d":
+        return d.fill30d;
+      case "expProfit":
+        return d.expProfitUsd;
+      case "turnover":
+        return d.turnoverDays;
       default:
         return null;
     }

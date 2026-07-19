@@ -89,6 +89,9 @@ const SORT_KEYS = new Set([
   "sales7d",
   "dip",
   "realMargin",
+  "fill30d",
+  "expProfit",
+  "turnover",
 ]);
 
 // ---- /api/items ----
