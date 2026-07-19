@@ -178,10 +178,12 @@ export function queryItems(
   db: Database.Database,
   params: QueryItemsParams,
 ): ItemDto[] {
+  // Хотя бы ОДНА цена: предметы с пустой стороной стакана (ножи/перчатки без
+  // лотов, фазы Doppler и т.п.) обязаны быть видимы — доктрина ложноотрицательных.
+  // Метрики, требующие обеих цен, у них честно null (и тонут в сортировке).
   const where: string[] = [
     "app_id = ?",
-    "buy_order IS NOT NULL",
-    "sell_price IS NOT NULL",
+    "(buy_order IS NOT NULL OR sell_price IS NOT NULL)",
   ];
   const sqlParams: unknown[] = [params.app];
 
@@ -269,17 +271,21 @@ export function queryItems(
 
   // Преобразуем в DTO с конвертацией в USD.
   let dtos: ItemDto[] = rows.map((r) => {
-    // Обе цены гарантированы WHERE (IS NOT NULL).
-    const highestBuy = r.buy_order as number; // STEAM(AUTO): верхний автозапрос
-    const lowestSell = r.sell_price as number; // STEAM: нижний лот
+    // Любая сторона стакана может быть null (пустая сторона у ножей/фаз и т.п.).
+    const highestBuy = r.buy_order; // STEAM(AUTO): верхний автозапрос | null
+    const lowestSell = r.sell_price; // STEAM: нижний лот | null
 
     // Цена покупки и цена, по которой продаём, зависят от выбранной пары сервисов.
     const buyCost = buyFrom === "steam" ? lowestSell : highestBuy;
     const sellGross = sellTo === "steam" ? lowestSell : highestBuy;
     // Комиссия Steam берётся при ЛЮБОЙ продаже на Steam (и листингом, и автозапросу).
-    const sellNet = sellerReceives(sellGross);
-    const profitRaw = sellNet - buyCost;
-    const margin = buyCost > 0 ? (profitRaw / buyCost) * 100 : null; // валютнонезависимо
+    const sellNet = sellGross !== null ? sellerReceives(sellGross) : null;
+    const profitRaw =
+      sellNet !== null && buyCost !== null ? sellNet - buyCost : null;
+    const margin =
+      profitRaw !== null && buyCost !== null && buyCost > 0
+        ? (profitRaw / buyCost) * 100
+        : null; // валютнонезависимо
 
     const buyUsdCents = toUsdCents(buyCost, r.currency);
     const sellUsdCents = toUsdCents(sellGross, r.currency);
@@ -339,9 +345,13 @@ export function queryItems(
       realProfitUsd = centsToUsd(profitUsdCents);
       realMarginPct = round2(margin);
     } else {
+      // Кламп по лоту действует, когда лот есть; без лотов (пустая сторона
+      // продажи у ножей и т.п.) продаём по свежей медиане сделок.
       const realSellUsdCents =
-        freshMedianUsdCents !== null && lowestSellUsdCents !== null
-          ? Math.min(lowestSellUsdCents, freshMedianUsdCents)
+        freshMedianUsdCents !== null
+          ? lowestSellUsdCents !== null
+            ? Math.min(lowestSellUsdCents, freshMedianUsdCents)
+            : freshMedianUsdCents
           : null;
       // sellerReceives на USD-центах: комиссия пропорциональна, погрешность
       // округления <= 1-2 цента — приемлемо для оценочной метрики.

@@ -18,6 +18,17 @@ import type { SteamHttp } from "./http.js";
  *   — дата (строка), медианная цена (float, в валюте запроса), число продаж (строка).
  */
 
+/**
+ * У предмета НЕТ ни одной сделки в истории. Это не сбой, а факт «мёртвого»
+ * предмета: вызывающий должен записать нулевую статистику, а не fail.
+ */
+export class EmptyHistoryError extends Error {
+  constructor(name: string, appId: number) {
+    super(`pricehistory: пустая история для "${name}" (app ${appId})`);
+    this.name = "EmptyHistoryError";
+  }
+}
+
 export interface PriceHistoryPoint {
   /** Дата точки (день торгов). */
   date: Date;
@@ -120,9 +131,7 @@ export async function fetchPriceHistory(
     );
   }
   if (data.prices.length === 0) {
-    throw new Error(
-      `pricehistory: пустая история для "${marketHashName}" (app ${appId})`,
-    );
+    throw new EmptyHistoryError(marketHashName, appId);
   }
 
   const points: PriceHistoryPoint[] = [];

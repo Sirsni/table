@@ -3,7 +3,7 @@ import type { SteamHttp } from "./steam/http.js";
 import { SteamHttpError } from "./steam/http.js";
 import { fetchMarketPage, MARKET_PAGE_SIZE } from "./steam/searchRender.js";
 import { fetchOrderBook } from "./steam/orderbook.js";
-import { fetchPriceHistory } from "./steam/pricehistory.js";
+import { EmptyHistoryError, fetchPriceHistory } from "./steam/pricehistory.js";
 import { computeStats } from "./stats.js";
 import {
   upsertItem,
@@ -408,6 +408,21 @@ export async function enrichHistory(
         rateLimited = 0; // успех сбрасывает счётчик 429
       } catch (err) {
         if (ctrl.signal.aborted) return; // отмена — не считаем
+        if (err instanceof EmptyHistoryError) {
+          // «Мёртвый» предмет: сделок нет вообще. Пишем нулевую статистику —
+          // это данные (sales=0), а не сбой; предмет остаётся видимым (доктрина).
+          upsertItemStats(db, it.id, {
+            sales7d: 0, sales30d: 0, avg7d: null, avg30d: null,
+            lastPrice: null, lastDate: null, currency,
+            median7d: null, median30d: null, p25_30d: null,
+            volatilityPct: null, baselinePrice: null, recentPrice: null,
+            boostScore: null,
+          });
+          ok++;
+          processed++;
+          emit();
+          continue;
+        }
         fail++;
         lastErrMsg = err instanceof Error ? err.message : String(err);
         if (isRateLimit(err)) {
